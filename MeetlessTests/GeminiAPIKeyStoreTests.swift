@@ -3,6 +3,73 @@ import XCTest
 @testable import Meetless
 
 final class GeminiAPIKeyStoreTests: XCTestCase {
+    func testTranscriptionSettingsDefaultLanguageIsEnglish() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+
+        XCTAssertEqual(store.transcriptionLanguage, .english)
+        XCTAssertEqual(store.transcriptionLanguage.whisperCode, "en")
+        XCTAssertEqual(store.transcriptOutputLanguage, .english)
+        XCTAssertEqual(store.transcriptTranslationProvider, .gemini)
+        XCTAssertEqual(store.translationModel(for: .gemini), "gemini-2.5-flash")
+        XCTAssertEqual(store.translationModel(for: .openAI), "gpt-5.4-mini")
+    }
+
+    func testTranscriptionSettingsPersistsKoreanLanguage() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+
+        store.transcriptionLanguage = .korean
+
+        let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        XCTAssertEqual(reopenedStore.transcriptionLanguage, .korean)
+        XCTAssertEqual(reopenedStore.transcriptionLanguage.whisperCode, "ko")
+    }
+
+    func testTranscriptionSettingsFallsBackToEnglishForInvalidStoredValue() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        userDefaults.set("fr", forKey: "meetless.transcriptionLanguage")
+        userDefaults.set("fr", forKey: "meetless.transcriptOutputLanguage")
+        userDefaults.set("anthropic", forKey: "meetless.transcriptTranslationProvider")
+        userDefaults.set("", forKey: "meetless.transcriptTranslation.gemini.model")
+        userDefaults.set("not a url", forKey: "meetless.transcriptTranslation.openai.baseURL")
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+
+        XCTAssertEqual(store.transcriptionLanguage, .english)
+        XCTAssertEqual(store.transcriptionLanguage.whisperCode, "en")
+        XCTAssertEqual(store.transcriptOutputLanguage, .english)
+        XCTAssertEqual(store.transcriptTranslationProvider, .gemini)
+        XCTAssertEqual(store.translationModel(for: .gemini), "gemini-2.5-flash")
+        XCTAssertEqual(store.translationBaseURL(for: .openAI).absoluteString, "https://api.openai.com")
+    }
+
+    func testTranscriptionSettingsPersistsVietnameseOutputAndOpenAIProviderPreset() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+
+        store.transcriptOutputLanguage = .vietnamese
+        store.transcriptTranslationProvider = .openAI
+        store.setTranslationModel("gpt-test-translation", for: .openAI)
+        store.setTranslationBaseURL(URL(string: "https://openai.test")!, for: .openAI)
+
+        let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        XCTAssertEqual(reopenedStore.transcriptOutputLanguage, .vietnamese)
+        XCTAssertEqual(reopenedStore.transcriptTranslationProvider, .openAI)
+        XCTAssertEqual(reopenedStore.translationModel(for: .openAI), "gpt-test-translation")
+        XCTAssertEqual(reopenedStore.translationBaseURL(for: .openAI).absoluteString, "https://openai.test")
+    }
+
+    func testWhisperBridgeDefaultsToMultilingualBaseModel() {
+        let assets = WhisperBridgeAssets(bundle: Bundle(for: Self.self))
+
+        XCTAssertEqual(assets.modelBasename, "ggml-base")
+        XCTAssertEqual(assets.bundledModelFilename, "ggml-base.bin")
+    }
+
+    func testTranscriptionLanguageMapsKoreanToWhisperCode() {
+        XCTAssertEqual(TranscriptionLanguage.korean.whisperCode, "ko")
+    }
+
     func testLoadAPIKeyReturnsNilWhenKeyIsMissing() throws {
         let keychain = FakeKeychainItemAccessor()
         let store = KeychainGeminiAPIKeyStore(keychain: keychain)
@@ -20,6 +87,16 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
 
         XCTAssertEqual(try store.loadAPIKey(), "gemini-secret")
         XCTAssertEqual(keychain.recordedValues, ["gemini-secret"])
+    }
+
+    func testOpenAIKeychainStoreUsesSeparateKeychainPath() throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainOpenAIAPIKeyStore(keychain: keychain)
+
+        try store.saveAPIKey("openai-secret")
+
+        XCTAssertEqual(try store.loadAPIKey(), "openai-secret")
+        XCTAssertEqual(keychain.recordedValues, ["openai-secret"])
     }
 
     func testSaveAPIKeyUpdatesExistingValue() throws {
@@ -174,6 +251,13 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
             .error("Keychain could not complete the request. Check macOS access and try again.")
         )
     }
+}
+
+private func makeIsolatedUserDefaults() throws -> UserDefaults {
+    let suiteName = "MeetlessTests-\(UUID().uuidString)"
+    let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    userDefaults.removePersistentDomain(forName: suiteName)
+    return userDefaults
 }
 
 private final class FakeKeychainItemAccessor: KeychainItemAccessing {

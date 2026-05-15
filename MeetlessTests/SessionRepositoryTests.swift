@@ -254,6 +254,49 @@ final class SessionRepositoryTests: XCTestCase {
         XCTAssertNil(manifest["generatedNotesFilename"])
     }
 
+    func testOldTranscriptSnapshotWithoutTranslationFieldsStillLoads() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryLegacyTranscriptTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring),
+                SourcePipelineStatus(source: .me, detail: "Me lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: [],
+            startedAt: Date(timeIntervalSince1970: 550)
+        )
+        try Data(
+            """
+            {
+              "schemaVersion" : 1,
+              "savedAt" : "1970-01-01T00:09:10Z",
+              "chunks" : [
+                {
+                  "id" : "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+                  "source" : "Meeting",
+                  "text" : "Legacy transcript text.",
+                  "startFrameIndex" : 0,
+                  "endFrameIndex" : 16000,
+                  "sampleRate" : 16000,
+                  "sequenceNumber" : 1
+                }
+              ]
+            }
+            """.utf8
+        ).write(to: session.transcriptURL, options: .atomic)
+
+        let detail = try await repository.loadSavedSessionDetail(at: session.directoryURL)
+        let chunk = try XCTUnwrap(detail.transcriptChunks.first)
+
+        XCTAssertEqual(chunk.text, "Legacy transcript text.")
+        XCTAssertNil(chunk.originalText)
+        XCTAssertNil(chunk.translationStatus)
+        XCTAssertNil(chunk.translationProvider)
+    }
+
     func testSavedGeneratedNotesReopenWithHiddenTranscriptAndActionBullets() async throws {
         let repository = SessionRepository()
         let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryGeneratedNotesSaveTests")

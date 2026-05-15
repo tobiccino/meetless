@@ -5,12 +5,22 @@ actor WhisperSourceWorker {
     let source: RecordingSourceKind
 
     private let assets: WhisperBridgeAssets
+    private var language: TranscriptionLanguage
     private var contextHandle: WhisperContextHandle?
     private var loadedModelURL: URL?
 
-    init(source: RecordingSourceKind, assets: WhisperBridgeAssets = WhisperBridgeAssets()) {
+    init(
+        source: RecordingSourceKind,
+        assets: WhisperBridgeAssets = WhisperBridgeAssets(),
+        language: TranscriptionLanguage = .defaultLanguage
+    ) {
         self.source = source
         self.assets = assets
+        self.language = language
+    }
+
+    func setLanguage(_ language: TranscriptionLanguage) {
+        self.language = language
     }
 
     func prepareBundledModel() throws -> String {
@@ -36,7 +46,7 @@ actor WhisperSourceWorker {
 
         _ = try prepareBundledModel()
         let threadCount = preferredThreadCount()
-        return try transcribe(samples: samples, threadCount: threadCount)
+        return try transcribe(samples: samples, threadCount: threadCount, language: language)
     }
 
     func unloadModel() {
@@ -48,7 +58,7 @@ actor WhisperSourceWorker {
         let modelName = try prepareBundledModel()
         let samples = try decodePCM16WaveFile(url)
         let threadCount = preferredThreadCount()
-        let text = try transcribe(samples: samples, threadCount: threadCount)
+        let text = try transcribe(samples: samples, threadCount: threadCount, language: language)
 
         return WhisperSmokeTranscription(
             source: source,
@@ -80,7 +90,11 @@ actor WhisperSourceWorker {
         loadedModelURL = url
     }
 
-    private func transcribe(samples: [Float], threadCount: Int) throws -> String {
+    private func transcribe(
+        samples: [Float],
+        threadCount: Int,
+        language: TranscriptionLanguage
+    ) throws -> String {
         guard let contextHandle else {
             throw WhisperBridgeError.noLoadedModel(source: source)
         }
@@ -96,8 +110,8 @@ actor WhisperSourceWorker {
         params.no_context = true
         params.single_segment = false
 
-        let text = try "en".withCString { language in
-            params.language = language
+        let text = try language.whisperCode.withCString { languageCode in
+            params.language = languageCode
             whisper_reset_timings(contextHandle.opaquePointer)
 
             let result = samples.withUnsafeBufferPointer { buffer in

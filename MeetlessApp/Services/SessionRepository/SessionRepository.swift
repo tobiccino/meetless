@@ -221,7 +221,7 @@ private enum SavedSessionNoticeFactory {
                     id: "incomplete",
                     severity: .warning,
                     title: "Saved as incomplete",
-                    message: "Meetless saved this bundle after recording ended unexpectedly. The transcript shown here is the exact snapshot that was available at stop time."
+                    message: "Meetless saved this bundle after recording ended unexpectedly. The transcript shown here is the display snapshot that was available at stop time."
                 )
             )
         }
@@ -246,7 +246,7 @@ private enum SavedSessionNoticeFactory {
                     id: "snapshot-note",
                     severity: .info,
                     title: "Saved snapshot note",
-                    message: "Meetless shows the transcript snapshot and source markers that were written into this local bundle. If no extra warning markers were saved, the app does not infer them later."
+                    message: "Meetless shows the display transcript snapshot and source markers that were written into this local bundle. Hidden original transcript text may exist for audit/debug when translation was enabled."
                 )
             )
         }

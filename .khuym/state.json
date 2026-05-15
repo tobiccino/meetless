@@ -1,11 +1,11 @@
 {
   "schema_version": "1.1",
-  "feature_slug": "gemini-session-notes",
+  "feature_slug": "transcript-translation-display",
   "mode": "standard",
-  "active_skill": "khuym:compounding",
-  "phase": "compounding-complete",
-  "phase_number": 3,
-  "epic_id": "bd-1bf",
+  "active_skill": "khuym:reviewing",
+  "phase": "review-complete",
+  "phase_number": 1,
+  "epic_id": "",
   "approved_gates": {
     "context": true,
     "phase_plan": true,
@@ -16,125 +16,23 @@
   "active_workers": [],
   "blockers": [],
   "focus": "idle",
-  "summary": "Compounding complete for Gemini Session Notes. Learnings captured and 2 critical patterns promoted from the UAT/provider integration failure.",
-  "next_action": "Start the next feature or address deferred P2 follow-ups bd-ugr and bd-2we.",
+  "summary": "Transcript output language and Gemini/OpenAI-compatible translation providers implemented. OpenAI provider now uses Chat Completions request/response shape, accepts a full /v1/chat/completions endpoint such as http://13.21.34.219:11434/v1/chat/completions, and Info.plist allows HTTP transport for user-configured compatible endpoints.",
+  "next_action": "Manual UAT: relaunch the rebuilt app, configure OpenAI provider with model gemma4:31b, base URL http://13.21.34.219:11434/v1/chat/completions, an operator-provided API key, then verify live transcript translation.",
   "review_uat": {
-    "phase": 3,
-    "result": "passed after P1 fix",
-    "items": [
-      "Settings save/update/delete Gemini API key",
-      "Open saved session with audio artifacts",
-      "Cancel upload confirmation without starting generation",
-      "Confirm upload and see progress",
-      "Success shows Summary and Action Items",
-      "Reopen shows persisted notes and Generate disabled",
-      "Failure leaves session unchanged with retryable error"
-    ],
-    "skips": []
-  },
-  "review_findings": [
-    {
-      "id": "bd-21r",
-      "severity": "P1",
-      "status": "closed",
-      "summary": "Human UAT failed because Generate surfaced request-preparation copy. Fixed by adding outbound network entitlement and switching Gemini file upload to resumable start plus upload/finalize."
+    "automated": {
+      "focused_tests": "passed: TranscriptTranslationServiceTests, 4 tests, 0 failures",
+      "full_suite": "passed: 72 tests, 0 failures",
+      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-; xcodebuild build -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-"
     },
-    {
-      "id": "bd-1on",
-      "severity": "P2",
-      "status": "closed",
-      "summary": "Repository-valid .wave audio is not mapped by the Gemini upload MIME mapper."
-    }
-  ],
-  "phase_3": {
-    "contract": "history/gemini-session-notes/phase-3-contract.md",
-    "story_map": "history/gemini-session-notes/phase-3-story-map.md",
-    "validation": "history/gemini-session-notes/phase-3-validation.md",
-    "beads": [
-      "bd-1on",
-      "bd-1ok",
-      "bd-uen",
-      "bd-213"
-    ],
-    "validation_focus": [
-      "D4 settings/key management",
-      "D7 already-generated disabled state",
-      "D8 unchanged session on failure",
-      "D9 per-upload confirmation",
-      "hidden transcript stays out of Session Detail UI",
-      "minimum-size detail layout"
-    ],
-    "completed_commits": [
-      {
-        "bead": "bd-1on",
-        "commit": "7ed190f",
-        "summary": ".wave audio maps to audio/wav for Gemini uploads"
-      },
-      {
-        "bead": "bd-1ok",
-        "commit": "b565c74",
-        "summary": "global Gemini key settings"
-      },
-      {
-        "bead": "bd-uen",
-        "commit": "656ab37",
-        "summary": "Session Detail Generate lifecycle"
-      },
-      {
-        "bead": "bd-213",
-        "commit": "71abc14",
-        "summary": "persisted Summary and Action Items display"
-      }
-    ],
-    "final_swarm_test": {
-      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS'",
-      "result": "passed",
-      "tests": 57,
-      "failures": 0,
-      "ran_at": "2026-05-01T13:56:04+07:00"
-    },
-    "review": {
-      "artifact": "history/gemini-session-notes/phase-3-review.md",
-      "automated_findings": [],
-      "artifact_verification": "passed",
-      "graph_blockers": 0,
-      "test": {
-        "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS'",
-        "result": "passed",
-        "tests": 57,
-        "failures": 0,
-        "ran_at": "2026-05-01T14:17:54+07:00",
-        "xcresult": "/Users/themrb/Library/Developer/Xcode/DerivedData/Meetless-gukhpkfgatlhzrdntlwatxqwnxvy/Logs/Test/Test-Meetless-2026.05.01_14-17-46-+0700.xcresult"
-      },
-      "uat": "passed",
-      "uat_failures": [
-        {
-          "reported_at": "2026-05-01T14:14:00+07:00",
-          "result": "fail",
-          "symptom": "Generate unavailable / Meetless could not prepare the Gemini Request",
-          "fix_bead": "bd-21r",
-          "fix_status": "closed",
-          "rerun_result": "passed"
-        }
-      ]
-    }
+    "manual": "pending"
   },
-  "review_closeout": {
-    "epic_id": "bd-1bf",
-    "epic_status": "closed",
-    "closed_at": "2026-05-01T14:24:54+07:00",
-    "state_archive": "history/gemini-session-notes/state-final.json",
-    "result": "Feature complete. Ready for compounding."
-  },
-  "deferred_beads": [
-    "bd-ugr",
-    "bd-2we"
-  ],
+  "review_findings": [],
+  "deferred_beads": [],
   "last_compounding_run": {
-    "feature": "gemini-session-notes",
-    "date": "2026-05-01",
-    "learnings_file": "history/learnings/20260501-gemini-session-notes-provider-uat.md",
-    "critical_promotions": 2
+    "feature": "",
+    "date": "",
+    "learnings_file": "",
+    "critical_promotions": 0
   },
-  "last_updated": "2026-05-01T14:34:18+07:00"
+  "last_updated": "2026-05-15T21:09:00+07:00"
 }

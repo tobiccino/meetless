@@ -24,6 +24,32 @@ enum WhisperBridgeError: LocalizedError {
     }
 }
 
+enum TranscriptionLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
+    case english = "en"
+    case korean = "ko"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .english:
+            return "English"
+        case .korean:
+            return "Korean"
+        }
+    }
+
+    var whisperCode: String {
+        rawValue
+    }
+
+    static let defaultLanguage: TranscriptionLanguage = .english
+
+    init(storedValue: String?) {
+        self = storedValue.flatMap(Self.init(rawValue:)) ?? Self.defaultLanguage
+    }
+}
+
 struct WhisperBridgeAssets {
     let bundle: Bundle
     let modelBasename: String
@@ -33,7 +59,7 @@ struct WhisperBridgeAssets {
 
     init(
         bundle: Bundle = .main,
-        modelBasename: String = "ggml-tiny.en",
+        modelBasename: String = "ggml-base",
         modelExtension: String = "bin",
         sampleBasename: String = "jfk",
         sampleExtension: String = "wav"

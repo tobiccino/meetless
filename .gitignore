@@ -7,3 +7,6 @@
 .DS_Store
 xcuserdata/
 *.xcuserstate
+
+# Local Whisper model binaries are large and should not be pushed to GitHub.
+MeetlessApp/Resources/Models/*.bin

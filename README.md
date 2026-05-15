@@ -8,10 +8,12 @@ The app records a meeting into two separate audio sources:
 - `Meeting`: ScreenCaptureKit system audio.
 - `Me`: ScreenCaptureKit microphone capture.
 
-Both sources are normalized for local transcription, written into a local session
-bundle, and shown as one committed transcript timeline. Saved sessions can be
-reopened from the Sessions screen, reviewed as read-only transcript snapshots, and
-enriched with a permanent Gemini summary plus simple action-item bullets.
+Both sources are normalized for local English or Korean transcription, optionally
+translated to the configured output language, written into a local session
+bundle, and shown as one committed display transcript timeline. Saved sessions
+can be reopened from the Sessions screen, reviewed as read-only display
+transcript snapshots, and enriched with a permanent Gemini summary plus simple
+action-item bullets.
 
 ## Requirements
 
@@ -19,7 +21,9 @@ enriched with a permanent Gemini summary plus simple action-item bullets.
 - Xcode with the macOS SDK.
 - Git submodule support for the pinned `whisper.cpp` dependency.
 - Screen Recording and Microphone permissions for runtime recording.
-- A Gemini API key for optional session-note generation.
+- A Gemini API key for optional session-note generation and Gemini transcript
+  translation.
+- An OpenAI API key when OpenAI is selected for transcript translation.
 
 ## Project Layout
 
@@ -39,6 +43,8 @@ enriched with a permanent Gemini summary plus simple action-item bullets.
   storage.
 - `MeetlessApp/Services/GeminiSessionNotes` - Gemini Files API upload,
   `gemini-2.5-flash` generation, structured response parsing, and orchestration.
+- `MeetlessApp/Services/TranscriptTranslation` - Gemini/OpenAI transcript
+  translation request clients and provider configuration.
 - `MeetlessPackages/WhisperCppBridge` - Swift-facing bridge around the bundled
   `whisper.cpp` framework and model.
 - `Vendor/whisper.cpp` - pinned upstream whisper dependency.
@@ -54,8 +60,9 @@ Initialize and build the pinned whisper framework:
 ./scripts/bootstrap-whisper.sh
 ```
 
-The bootstrap command initializes `Vendor/whisper.cpp` when needed and then runs
-the framework build. To rebuild the framework after the submodule is present:
+The bootstrap command initializes `Vendor/whisper.cpp` when needed, downloads the
+local `ggml-base.bin` model when missing, and then runs the framework build. To
+rebuild the framework after the submodule and model are present:
 
 ```zsh
 ./scripts/build-whisper-xcframework.sh
@@ -63,7 +70,7 @@ the framework build. To rebuild the framework after the submodule is present:
 
 The Release app expects these bundled resources:
 
-- `MeetlessApp/Resources/Models/ggml-tiny.en.bin`
+- `MeetlessApp/Resources/Models/ggml-base.bin`
 - `MeetlessApp/Resources/Samples/jfk.wav`
 - `Vendor/whisper.cpp/build-apple/whisper.xcframework`
 
@@ -132,8 +139,9 @@ A saved session bundle contains:
 
 - `session.json` - manifest, status, source health, audio artifact names,
   transcript snapshot state, and optional generated-notes pointer.
-- `transcript.json` - committed transcript chunks as saved by the local
-  transcription pipeline.
+- `transcript.json` - committed display transcript chunks as saved by the local
+  transcription pipeline. Hidden original transcript fields may be present when
+  translation was enabled.
 - `meeting.m4a` and `me.m4a` - compressed source audio after successful stop.
 - `meeting.wav` and `me.wav` - durable fallback artifacts when AAC compression
   does not complete.
@@ -142,6 +150,27 @@ A saved session bundle contains:
 
 Finished WAV artifacts are compressed to AAC `.m4a` at 48 kbps. The original WAV
 file remains the durable source of record when compression fails.
+
+## Local Transcription
+
+Meetless bundles the multilingual Whisper `base` model for on-device
+transcription. Settings lets the user choose English or Korean; the selected
+language applies to the next recording and the smoke transcription action.
+
+## Transcript Translation
+
+Settings also lets the user choose a transcript output language: English,
+Korean, or Vietnamese. When the output language differs from the Whisper source
+language, Meetless translates each committed transcript window before it appears
+live and before it is written to `transcript.json`.
+
+Gemini is the default translation provider and reuses the saved Gemini API key.
+OpenAI can be selected with its own Keychain-backed API key; the default OpenAI
+translation model is `gpt-5.4-mini` through the Responses API. Provider model
+and base URL presets can be overridden in Settings.
+
+If translation fails or a provider key is missing, recording continues and the
+original transcript text is displayed and saved with warning metadata.
 
 ## Gemini Session Notes
 
@@ -203,16 +232,17 @@ Create a DMG:
 ./scripts/package-dmg.sh
 ```
 
-The packaging script runs tests by default, builds the Release app, verifies the
-bundled model and embedded whisper framework, checks the app signature, creates a
-compressed DMG in `.dist/`, and verifies the DMG.
+The packaging script runs tests by default with signing disabled, builds the
+Release app, verifies the bundled model and embedded whisper framework, checks
+the app signature, creates a compressed DMG in `.dist/`, and verifies the DMG.
+Without a Developer ID setting it uses an ad-hoc local signature.
 
 Packaging environment options:
 
 - `SKIP_TESTS=1` - skip the pre-package `xcodebuild test` step.
 - `DMG_NAME=<name>.dmg` - choose the output name under `.dist/`.
 - `DEVELOPER_ID_APPLICATION="Developer ID Application: Long Le (63M98WD275)"` -
-  sign the Release build with Developer ID and hardened runtime.
+  replace the default ad-hoc signature with Developer ID and hardened runtime.
 - `NOTARY_KEYCHAIN_PROFILE=Meetless-Notary` - submit, staple, and validate the
   DMG with Apple's notary service.
 

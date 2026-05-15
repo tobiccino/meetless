@@ -1,7 +1,13 @@
 import Foundation
 import Security
 
-protocol GeminiAPIKeyStoring {
+protocol GeminiAPIKeyStoring: Sendable {
+    func loadAPIKey() throws -> String?
+    func saveAPIKey(_ apiKey: String) throws
+    func deleteAPIKey() throws
+}
+
+protocol OpenAIAPIKeyStoring: Sendable {
     func loadAPIKey() throws -> String?
     func saveAPIKey(_ apiKey: String) throws
     func deleteAPIKey() throws
@@ -46,7 +52,7 @@ struct SystemKeychainItemAccessor: KeychainItemAccessing {
     }
 }
 
-final class KeychainGeminiAPIKeyStore: GeminiAPIKeyStoring {
+private final class KeychainAPIKeyStore: @unchecked Sendable {
     private let keychain: KeychainItemAccessing
     private let service: String
     private let account: String
@@ -126,5 +132,53 @@ final class KeychainGeminiAPIKeyStore: GeminiAPIKeyStoring {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+    }
+}
+
+final class KeychainGeminiAPIKeyStore: GeminiAPIKeyStoring, @unchecked Sendable {
+    private let store: KeychainAPIKeyStore
+
+    init(
+        keychain: KeychainItemAccessing = SystemKeychainItemAccessor(),
+        service: String = "com.themrb.meetless.gemini-api-key",
+        account: String = "gemini-api-key"
+    ) {
+        self.store = KeychainAPIKeyStore(keychain: keychain, service: service, account: account)
+    }
+
+    func loadAPIKey() throws -> String? {
+        try store.loadAPIKey()
+    }
+
+    func saveAPIKey(_ apiKey: String) throws {
+        try store.saveAPIKey(apiKey)
+    }
+
+    func deleteAPIKey() throws {
+        try store.deleteAPIKey()
+    }
+}
+
+final class KeychainOpenAIAPIKeyStore: OpenAIAPIKeyStoring, @unchecked Sendable {
+    private let store: KeychainAPIKeyStore
+
+    init(
+        keychain: KeychainItemAccessing = SystemKeychainItemAccessor(),
+        service: String = "com.themrb.meetless.openai-api-key",
+        account: String = "openai-api-key"
+    ) {
+        self.store = KeychainAPIKeyStore(keychain: keychain, service: service, account: account)
+    }
+
+    func loadAPIKey() throws -> String? {
+        try store.loadAPIKey()
+    }
+
+    func saveAPIKey(_ apiKey: String) throws {
+        try store.saveAPIKey(apiKey)
+    }
+
+    func deleteAPIKey() throws {
+        try store.deleteAPIKey()
     }
 }

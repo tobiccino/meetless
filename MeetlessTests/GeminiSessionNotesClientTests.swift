@@ -539,6 +539,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         let appModel = AppModel(
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
+            openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -589,6 +590,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         let appModel = AppModel(
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
+            openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -630,6 +632,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         let appModel = AppModel(
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
+            openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -663,6 +666,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
         let appModel = AppModel(
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
+            openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -902,7 +906,7 @@ private actor FixtureGeminiHTTPTransport: GeminiHTTPTransport {
     }
 }
 
-private final class FixtureGeminiAPIKeyStore: GeminiAPIKeyStoring {
+private final class FixtureGeminiAPIKeyStore: GeminiAPIKeyStoring, OpenAIAPIKeyStoring {
     private let apiKey: String?
     private let loadError: Error?
 

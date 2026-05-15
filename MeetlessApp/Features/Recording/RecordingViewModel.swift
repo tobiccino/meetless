@@ -62,6 +62,39 @@ struct CommittedTranscriptChunk: Identifiable, Codable, Sendable {
     let endFrameIndex: Int64
     let sampleRate: Double
     let sequenceNumber: Int
+    let originalText: String?
+    let sourceLanguageCode: String?
+    let outputLanguageCode: String?
+    let translationProvider: TranscriptTranslationProvider?
+    let translationStatus: TranscriptTranslationStatus?
+
+    init(
+        id: UUID,
+        source: RecordingSourceKind,
+        text: String,
+        startFrameIndex: Int64,
+        endFrameIndex: Int64,
+        sampleRate: Double,
+        sequenceNumber: Int,
+        originalText: String? = nil,
+        sourceLanguageCode: String? = nil,
+        outputLanguageCode: String? = nil,
+        translationProvider: TranscriptTranslationProvider? = nil,
+        translationStatus: TranscriptTranslationStatus? = nil
+    ) {
+        self.id = id
+        self.source = source
+        self.text = text
+        self.startFrameIndex = startFrameIndex
+        self.endFrameIndex = endFrameIndex
+        self.sampleRate = sampleRate
+        self.sequenceNumber = sequenceNumber
+        self.originalText = originalText
+        self.sourceLanguageCode = sourceLanguageCode
+        self.outputLanguageCode = outputLanguageCode
+        self.translationProvider = translationProvider
+        self.translationStatus = translationStatus
+    }
 
     var startTime: TimeInterval {
         Double(startFrameIndex) / sampleRate
@@ -189,6 +222,12 @@ private struct SourceTranscriptLane {
     }
 }
 
+protocol TranscriptWindowTranscribing: Sendable {
+    func transcribeIncrementalWindow(samples: [Float]) async throws -> String
+}
+
+extension WhisperSourceWorker: TranscriptWindowTranscribing {}
+
 private typealias TranscriptSnapshotHandler = @Sendable ([CommittedTranscriptChunk]) async -> Void
 
 struct TranscriptHealthSnapshot: Sendable {
@@ -217,12 +256,23 @@ private enum TranscriptProcessingOutcome: Sendable {
     case failure(String)
 }
 
+private struct ActiveTranscriptTranslationConfiguration: Sendable {
+    let sourceLanguage: TranscriptionLanguage
+    let outputLanguage: TranscriptOutputLanguage
+    let providerConfig: TranscriptTranslationProviderConfiguration
+
+    var shouldTranslate: Bool {
+        TranscriptOutputLanguage(transcriptionLanguage: sourceLanguage) != outputLanguage
+    }
+}
+
 actor TranscriptCoordinator {
     private let logger = Logger(subsystem: "com.themrb.meetless", category: "transcript-coordinator")
     private let minimumCommitFrameCount: Int
     private let maximumCommitFrameCount: Int
     private let maximumRetryCountPerWindow = 3
-    private let workers: [RecordingSourceKind: WhisperSourceWorker]
+    private let workers: [RecordingSourceKind: any TranscriptWindowTranscribing]
+    private let translator: any TranscriptTranslating
 
     private var committedChunks: [CommittedTranscriptChunk] = []
     private var lanes: [RecordingSourceKind: SourceTranscriptLane]
@@ -233,15 +283,18 @@ actor TranscriptCoordinator {
     private var snapshotHandler: TranscriptSnapshotHandler?
     private var degradedSourceStatuses: [RecordingSourceKind: SourcePipelineStatus] = [:]
     private var degradationLatestEvent: String?
+    private var translationConfiguration: ActiveTranscriptTranslationConfiguration?
 
     init(
-        meetingWorker: WhisperSourceWorker,
-        meWorker: WhisperSourceWorker,
+        meetingWorker: any TranscriptWindowTranscribing,
+        meWorker: any TranscriptWindowTranscribing,
+        translator: any TranscriptTranslating = TranscriptTranslationService(),
         minimumCommitSeconds: Double = 4,
         maximumCommitSeconds: Double = 8
     ) {
         minimumCommitFrameCount = Int(minimumCommitSeconds * 16_000)
         maximumCommitFrameCount = Int(maximumCommitSeconds * 16_000)
+        self.translator = translator
         workers = [
             .meeting: meetingWorker,
             .me: meWorker
@@ -268,6 +321,18 @@ actor TranscriptCoordinator {
 
     fileprivate func setSnapshotHandler(_ handler: TranscriptSnapshotHandler?) {
         snapshotHandler = handler
+    }
+
+    func setTranslationConfiguration(
+        sourceLanguage: TranscriptionLanguage,
+        outputLanguage: TranscriptOutputLanguage,
+        providerConfig: TranscriptTranslationProviderConfiguration
+    ) {
+        translationConfiguration = ActiveTranscriptTranslationConfiguration(
+            sourceLanguage: sourceLanguage,
+            outputLanguage: outputLanguage,
+            providerConfig: providerConfig
+        )
     }
 
     func ingest(_ chunk: SourceAudioChunk) {
@@ -360,18 +425,33 @@ actor TranscriptCoordinator {
         var degradedStatusToRecord: SourcePipelineStatus?
         var degradedEventToRecord: String?
         switch outcome {
-        case let .transcript(text):
+        case let .transcript(originalText):
             lane.markTranscriptionFinished()
             retryCounts[windowKey] = nil
             nextSequenceNumber += 1
+            let translation = await translatedTranscriptText(
+                originalText,
+                source: source
+            )
+            if let degradedStatus = translation.degradedStatus {
+                degradedStatusToRecord = degradedStatus
+            }
+            if let degradedEvent = translation.degradedEvent {
+                degradedEventToRecord = degradedEvent
+            }
             let candidateChunk = CommittedTranscriptChunk(
                 id: UUID(),
                 source: window.source,
-                text: text,
+                text: translation.text,
                 startFrameIndex: window.startFrameIndex,
                 endFrameIndex: window.endFrameIndex,
                 sampleRate: window.sampleRate,
-                sequenceNumber: nextSequenceNumber
+                sequenceNumber: nextSequenceNumber,
+                originalText: translation.originalText,
+                sourceLanguageCode: translation.sourceLanguageCode,
+                outputLanguageCode: translation.outputLanguageCode,
+                translationProvider: translation.translationProvider,
+                translationStatus: translation.translationStatus
             )
 
             if shouldSuppressCommittedChunk(candidateChunk) {
@@ -419,6 +499,80 @@ actor TranscriptCoordinator {
         }
 
         scheduleTranscriptionIfNeeded(for: source)
+    }
+
+    private func translatedTranscriptText(
+        _ text: String,
+        source: RecordingSourceKind
+    ) async -> (
+        text: String,
+        originalText: String?,
+        sourceLanguageCode: String?,
+        outputLanguageCode: String?,
+        translationProvider: TranscriptTranslationProvider?,
+        translationStatus: TranscriptTranslationStatus?,
+        degradedStatus: SourcePipelineStatus?,
+        degradedEvent: String?
+    ) {
+        guard let translationConfiguration else {
+            return (text, nil, nil, nil, nil, nil, nil, nil)
+        }
+
+        let sourceLanguageCode = translationConfiguration.sourceLanguage.rawValue
+        let outputLanguageCode = translationConfiguration.outputLanguage.rawValue
+        guard translationConfiguration.shouldTranslate else {
+            return (text, nil, sourceLanguageCode, outputLanguageCode, nil, .original, nil, nil)
+        }
+
+        do {
+            let translatedText = try await translator.translate(
+                TranscriptTranslationRequest(
+                    text: text,
+                    sourceLanguage: translationConfiguration.sourceLanguage,
+                    targetLanguage: translationConfiguration.outputLanguage,
+                    providerConfig: translationConfiguration.providerConfig
+                )
+            )
+            let displayText = translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !displayText.isEmpty else {
+                throw TranscriptTranslationError.malformedResponse(
+                    provider: translationConfiguration.providerConfig.provider
+                )
+            }
+
+            return (
+                displayText,
+                text,
+                sourceLanguageCode,
+                outputLanguageCode,
+                translationConfiguration.providerConfig.provider,
+                .translated,
+                nil,
+                nil
+            )
+        } catch {
+            let safeMessage = Self.safeTranslationFailureMessage(
+                for: error,
+                provider: translationConfiguration.providerConfig.provider
+            )
+            let degradedStatus = SourcePipelineStatus(
+                source: source,
+                detail: safeMessage,
+                state: .degraded
+            )
+            let degradedEvent = "\(source.rawValue) transcript translation failed. Meetless kept the original transcript text so recording and Stop can continue."
+            logger.error("translation failed for \(source.rawValue, privacy: .public): \(safeMessage, privacy: .public)")
+            return (
+                text,
+                nil,
+                sourceLanguageCode,
+                outputLanguageCode,
+                translationConfiguration.providerConfig.provider,
+                .failed,
+                degradedStatus,
+                degradedEvent
+            )
+        }
     }
 
     private func shouldSuppressCommittedChunk(_ candidateChunk: CommittedTranscriptChunk) -> Bool {
@@ -492,6 +646,17 @@ actor TranscriptCoordinator {
         }
 
         return trimmedText
+    }
+
+    private static func safeTranslationFailureMessage(
+        for error: Error,
+        provider: TranscriptTranslationProvider
+    ) -> String {
+        if let translationError = error as? TranscriptTranslationError {
+            return translationError.safeUserMessage
+        }
+
+        return "\(provider.displayName) could not translate this transcript window. Meetless kept the original transcript text."
     }
 
     private static func shouldTreatAsMeetingEcho(
@@ -710,7 +875,7 @@ actor PreviewRecordingCoordinator: RecordingCoordinating {
             CommittedTranscriptChunk(
                 id: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB") ?? UUID(),
                 source: .me,
-                text: "That gives the saved session the exact transcript timeline the operator already saw.",
+                text: "That gives the saved session the same display transcript timeline the operator already saw.",
                 startFrameIndex: 64_000,
                 endFrameIndex: 128_000,
                 sampleRate: 16_000,
@@ -725,6 +890,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
     private let meetingWorker: WhisperSourceWorker
     private let meWorker: WhisperSourceWorker
     private let transcriptCoordinator: TranscriptCoordinator
+    private let transcriptionSettingsStore: any TranscriptionSettingsStoring
     private let sessionRepository = SessionRepository()
     private let permissionGate = RecordingPermissionGate()
     private let captureSession = ScreenCaptureSession()
@@ -732,21 +898,35 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
     private var activeSession: PersistedSessionBundle?
     private var transcriptSnapshotPersistenceIssue: TranscriptSnapshotPersistenceIssue?
 
-    init(bundle: Bundle = .main) {
+    init(
+        bundle: Bundle = .main,
+        geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
+        openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
+        transcriptionSettingsStore: any TranscriptionSettingsStoring = UserDefaultsTranscriptionSettingsStore(),
+        translator: (any TranscriptTranslating)? = nil
+    ) {
         let assets = WhisperBridgeAssets(bundle: bundle)
         let meetingWorker = WhisperSourceWorker(source: .meeting, assets: assets)
         let meWorker = WhisperSourceWorker(source: .me, assets: assets)
+        let translator = translator
+            ?? TranscriptTranslationService(
+                geminiAPIKeyStore: geminiAPIKeyStore,
+                openAIAPIKeyStore: openAIAPIKeyStore
+            )
 
         self.meetingWorker = meetingWorker
         self.meWorker = meWorker
+        self.transcriptionSettingsStore = transcriptionSettingsStore
         self.transcriptCoordinator = TranscriptCoordinator(
             meetingWorker: meetingWorker,
-            meWorker: meWorker
+            meWorker: meWorker,
+            translator: translator
         )
     }
 
     func startShellSession() async throws -> RecordingStatusSnapshot {
         logger.notice("startShellSession begin")
+        await applyCurrentTranscriptionLanguage()
         let readiness = await permissionGate.evaluateStartReadiness()
         logger.notice("permission readiness evaluated; ready=\(readiness.isReady, privacy: .public) repairCount=\(readiness.repairActions.count, privacy: .public)")
         if !readiness.isReady {
@@ -873,15 +1053,15 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             let sourceNames = Self.formattedSourceList(for: transcriptHealth.sourceStatuses)
             savedSessionHeadline = "Capture stopped with partial transcript coverage"
             if finalStatus == .completed {
-                savedSessionDetail = "Capture stopped, and the saved bundle still holds durable Meeting and Me audio artifacts plus the exact visible transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
+                savedSessionDetail = "Capture stopped, and the saved bundle still holds durable Meeting and Me audio artifacts plus the display transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
             } else {
-                savedSessionDetail = "Capture ended unexpectedly, but the saved bundle still holds durable Meeting and Me audio artifacts plus the exact visible transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
+                savedSessionDetail = "Capture ended unexpectedly, but the saved bundle still holds durable Meeting and Me audio artifacts plus the display transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
             }
         } else {
             savedSessionHeadline = finalStatus == .completed ? "Capture stopped cleanly" : "Capture ended with an incomplete saved session"
             savedSessionDetail = capture.map {
                 if finalStatus == .completed {
-                    return "The ScreenCaptureKit session is down, and the saved Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) now holds the exact committed transcript snapshot plus durable Meeting and Me audio artifacts."
+                    return "The ScreenCaptureKit session is down, and the saved Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) now holds the committed display transcript snapshot plus durable Meeting and Me audio artifacts."
                 }
 
                 return "Capture ended unexpectedly, but the Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) still keeps the last committed transcript snapshot and durable Meeting and Me audio artifacts for incomplete-session recovery."
@@ -956,6 +1136,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
     }
 
     func runSmokeTranscription() async throws -> SmokeTranscriptionSnapshot {
+        await applyCurrentTranscriptionLanguage()
         let result = try await meetingWorker.transcribeBundledSmokeSample()
 
         return SmokeTranscriptionSnapshot(
@@ -964,6 +1145,23 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             detail: "The \(result.source.rawValue) worker loaded \(result.modelName), read \(result.sampleName), and returned local text on \(result.threadCount) threads from \(result.sampleCount) PCM frames.",
             transcript: result.text
         )
+    }
+
+    private func applyCurrentTranscriptionLanguage() async {
+        let language = transcriptionSettingsStore.transcriptionLanguage
+        await meetingWorker.setLanguage(language)
+        await meWorker.setLanguage(language)
+        let provider = transcriptionSettingsStore.transcriptTranslationProvider
+        await transcriptCoordinator.setTranslationConfiguration(
+            sourceLanguage: language,
+            outputLanguage: transcriptionSettingsStore.transcriptOutputLanguage,
+            providerConfig: TranscriptTranslationProviderConfiguration(
+                provider: provider,
+                model: transcriptionSettingsStore.translationModel(for: provider),
+                baseURL: transcriptionSettingsStore.translationBaseURL(for: provider)
+            )
+        )
+        logger.notice("transcription language set for next whisper work: \(language.whisperCode, privacy: .public)")
     }
 
     private static func blockedSourceStatuses(for repairActions: [PermissionRepairAction]) -> [SourcePipelineStatus] {

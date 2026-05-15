@@ -14,12 +14,12 @@ DMG under `.dist/`, and verifies the DMG image.
 | --- | --- |
 | `SKIP_TESTS=1` | Skips the pre-package `xcodebuild test` step. |
 | `DMG_NAME=<name>.dmg` | Sets the output DMG filename under `.dist/`. |
-| `DEVELOPER_ID_APPLICATION="Developer ID Application: Long Le (63M98WD275)"` | Builds with manual Developer ID signing and hardened runtime. |
+| `DEVELOPER_ID_APPLICATION="Developer ID Application: Long Le (63M98WD275)"` | Replaces the default ad-hoc local signature with Developer ID signing and hardened runtime. |
 | `NOTARY_KEYCHAIN_PROFILE=Meetless-Notary` | Submits the DMG to Apple's notary service, staples the ticket, and validates the stapled DMG. |
 
 Prerequisites:
 
-- `MeetlessApp/Resources/Models/ggml-tiny.en.bin` exists.
+- `MeetlessApp/Resources/Models/ggml-base.bin` exists.
 - `Vendor/whisper.cpp/build-apple/whisper.xcframework` exists.
 - The app entitlements include sandboxing, microphone input, and outbound
   network access for Gemini notes generation.
@@ -33,7 +33,15 @@ Prepare the pinned whisper framework when needed:
 ## Internal DMG Route
 
 Use this when you want a DMG for yourself, teammates, or technical testers and
-you accept that macOS may show a Gatekeeper warning.
+you accept that macOS may show a Gatekeeper warning. This route does not require
+a local Apple signing certificate:
+
+```zsh
+DMG_NAME="Meetless-local-$(date +%Y%m%d-%H%M).dmg" \
+./scripts/package-dmg.sh
+```
+
+Use Developer ID when the signing certificate is installed in Keychain:
 
 ```zsh
 SKIP_TESTS=1 \
@@ -45,9 +53,10 @@ DEVELOPER_ID_APPLICATION="Developer ID Application: Long Le (63M98WD275)" \
 What this does:
 
 - Builds the Release app.
-- Signs the app and embedded `whisper.framework` with Developer ID.
+- Signs the app and embedded `whisper.framework` ad-hoc by default, or with
+  Developer ID when `DEVELOPER_ID_APPLICATION` is set.
 - Verifies the app signature.
-- Checks that `ggml-tiny.en.bin` is bundled.
+- Checks that `ggml-base.bin` is bundled.
 - Checks that the embedded `whisper` framework binary is present.
 - Creates a compressed DMG in `.dist/`.
 - Verifies the DMG image.

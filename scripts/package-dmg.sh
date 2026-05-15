@@ -9,7 +9,7 @@ STAGING_DIR="${DIST_DIR}/staging"
 DMG_NAME="${DMG_NAME:-Meetless-$(date +%Y%m%d-%H%M).dmg}"
 DMG_PATH="${DIST_DIR}/${DMG_NAME}"
 APP_PATH="${DERIVED_DATA_DIR}/Build/Products/Release/Meetless.app"
-MODEL_PATH="${ROOT_DIR}/MeetlessApp/Resources/Models/ggml-tiny.en.bin"
+MODEL_PATH="${ROOT_DIR}/MeetlessApp/Resources/Models/ggml-base.bin"
 WHISPER_XCFRAMEWORK="${ROOT_DIR}/Vendor/whisper.cpp/build-apple/whisper.xcframework"
 
 cd "${ROOT_DIR}"
@@ -30,7 +30,10 @@ if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
   xcodebuild test \
     -project Meetless.xcodeproj \
     -scheme Meetless \
-    -destination 'platform=macOS'
+    -destination 'platform=macOS,arch=arm64' \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY=-
 fi
 
 build_args=(
@@ -47,6 +50,11 @@ if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
     "CODE_SIGN_IDENTITY=${DEVELOPER_ID_APPLICATION}"
     ENABLE_HARDENED_RUNTIME=YES
   )
+else
+  build_args+=(
+    CODE_SIGN_STYLE=Manual
+    CODE_SIGN_IDENTITY=-
+  )
 fi
 
 xcodebuild "${build_args[@]}"
@@ -56,7 +64,7 @@ if [[ ! -d "${APP_PATH}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${APP_PATH}/Contents/Resources/ggml-tiny.en.bin" ]]; then
+if [[ ! -f "${APP_PATH}/Contents/Resources/ggml-base.bin" ]]; then
   echo "Release app is missing the bundled whisper model." >&2
   exit 1
 fi

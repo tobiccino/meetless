@@ -40,7 +40,7 @@ struct MeetlessRootView: View {
                 onGenerateNotes: { appModel.generateNotesForSelectedSession() }
             )
         case .settings:
-            GeminiSettingsView(viewModel: appModel.geminiSettingsViewModel)
+            SettingsView(viewModel: appModel.geminiSettingsViewModel)
         }
     }
 }
@@ -166,26 +166,72 @@ private struct SidebarNavigation: View {
     }
 }
 
-private struct GeminiSettingsView: View {
+private struct SettingsView: View {
     @ObservedObject var viewModel: GeminiSettingsViewModel
     @State private var isConfirmingDelete = false
+    @State private var isConfirmingOpenAIDelete = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.largeGap) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Gemini")
+                    Text("Settings")
                         .font(MeetlessDesignTokens.Typography.screenTitle)
                         .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                         .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
-                    Text("Save the API key used for session notes generation.")
+                    Text("Choose transcript languages and manage provider access.")
                         .font(MeetlessDesignTokens.Typography.body)
                         .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                         .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
                 }
 
                 VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
-                    GeminiKeyStatusRow(status: viewModel.keyStatus)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Transcription")
+                            .font(MeetlessDesignTokens.Typography.windowTitle)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                        Text("Applies to the next recording and smoke transcription run.")
+                            .font(MeetlessDesignTokens.Typography.caption)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    }
+
+                    Picker("Language", selection: $viewModel.transcriptionLanguage) {
+                        ForEach(TranscriptionLanguage.allCases) { language in
+                            Text(language.displayName).tag(language)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 320)
+                }
+                .padding(18)
+                .background(MeetlessDesignTokens.Colors.windowBackground)
+                .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                        .stroke(MeetlessDesignTokens.Colors.separator)
+                )
+
+                translationCard
+
+                VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Gemini")
+                            .font(MeetlessDesignTokens.Typography.windowTitle)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                        Text("Save the API key used for Gemini session notes and Gemini transcript translation.")
+                            .font(MeetlessDesignTokens.Typography.caption)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    }
+
+                    GeminiKeyStatusRow(
+                        status: viewModel.keyStatus,
+                        providerName: "Gemini",
+                        missingMessage: "Add a Gemini API key before generating notes or translating with Gemini."
+                    )
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("API key")
@@ -241,6 +287,8 @@ private struct GeminiSettingsView: View {
                         .stroke(MeetlessDesignTokens.Colors.separator)
                 )
 
+                openAICard
+
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: MeetlessDesignTokens.Layout.contentMaxWidth, alignment: .leading)
@@ -254,11 +302,146 @@ private struct GeminiSettingsView: View {
         } message: {
             Text("Session notes generation will stay unavailable until a new key is saved.")
         }
+        .alert("Delete OpenAI API key?", isPresented: $isConfirmingOpenAIDelete) {
+            Button("Delete", role: .destructive) {
+                viewModel.deleteOpenAIAPIKey()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("OpenAI transcript translation will stay unavailable until a new key is saved.")
+        }
+    }
+
+    private var translationCard: some View {
+        VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Transcript Output")
+                    .font(MeetlessDesignTokens.Typography.windowTitle)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                Text("Translated transcript rows are shown live and saved in the session bundle.")
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+            }
+
+            Picker("Output language", selection: $viewModel.transcriptOutputLanguage) {
+                ForEach(TranscriptOutputLanguage.allCases) { language in
+                    Text(language.displayName).tag(language)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 440)
+
+            Picker("Translation provider", selection: $viewModel.transcriptTranslationProvider) {
+                ForEach(TranscriptTranslationProvider.allCases) { provider in
+                    Text(provider.displayName).tag(provider)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 320)
+
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Model")
+                        .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                    TextField(viewModel.transcriptTranslationProvider.defaultModel, text: $viewModel.translationModel)
+                        .textFieldStyle(.roundedBorder)
+                        .font(MeetlessDesignTokens.Typography.body)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Base URL")
+                        .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                    TextField(
+                        viewModel.transcriptTranslationProvider.defaultBaseURL.absoluteString,
+                        text: $viewModel.translationBaseURL
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(MeetlessDesignTokens.Typography.body)
+                }
+            }
+        }
+        .padding(18)
+        .background(MeetlessDesignTokens.Colors.windowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                .stroke(MeetlessDesignTokens.Colors.separator)
+        )
+    }
+
+    private var openAICard: some View {
+        VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("OpenAI")
+                    .font(MeetlessDesignTokens.Typography.windowTitle)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                Text("Save the API key used when OpenAI is selected for transcript translation.")
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+            }
+
+            GeminiKeyStatusRow(
+                status: viewModel.openAIKeyStatus,
+                providerName: "OpenAI",
+                missingMessage: "Add an OpenAI API key before translating with OpenAI."
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("API key")
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+
+                SecureField(
+                    viewModel.isOpenAIConfigured ? "Enter a new key to update" : "Enter OpenAI API key",
+                    text: $viewModel.openAIAPIKeyInput
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(MeetlessDesignTokens.Typography.body)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    viewModel.saveOpenAIAPIKey()
+                } label: {
+                    Label(viewModel.isOpenAIConfigured ? "Update Key" : "Save Key", systemImage: "key.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!viewModel.canSaveOpenAIAPIKey)
+
+                Button(role: .destructive) {
+                    isConfirmingOpenAIDelete = true
+                } label: {
+                    Label("Delete Key", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!viewModel.isOpenAIConfigured)
+
+                Spacer()
+            }
+        }
+        .padding(18)
+        .background(MeetlessDesignTokens.Colors.windowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                .stroke(MeetlessDesignTokens.Colors.separator)
+        )
     }
 }
 
 private struct GeminiKeyStatusRow: View {
     let status: GeminiSettingsViewModel.KeyStatus
+    let providerName: String
+    let missingMessage: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -270,7 +453,7 @@ private struct GeminiKeyStatusRow: View {
                     .font(MeetlessDesignTokens.Typography.body.weight(.semibold))
                     .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                     .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
-                Text(status.detail)
+                Text(statusDetail)
                     .font(MeetlessDesignTokens.Typography.caption)
                     .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                     .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
@@ -289,6 +472,19 @@ private struct GeminiKeyStatusRow: View {
             return MeetlessDesignTokens.Colors.warningAmber
         case .unknown, .notConfigured:
             return MeetlessDesignTokens.Colors.tertiaryText
+        }
+    }
+
+    private var statusDetail: String {
+        switch status {
+        case .unknown:
+            return "Checking the saved \(providerName) key."
+        case .configured:
+            return "A \(providerName) API key is saved in Keychain."
+        case .notConfigured:
+            return missingMessage
+        case .error(let message):
+            return message
         }
     }
 }

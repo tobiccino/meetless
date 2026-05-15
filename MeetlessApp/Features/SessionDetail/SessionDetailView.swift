@@ -41,7 +41,7 @@ final class SessionDetailViewModel: ObservableObject {
     }
 
     @Published private(set) var title = "Session detail"
-    @Published private(set) var subtitle = "Select a saved history row to open its persisted transcript snapshot and metadata here."
+    @Published private(set) var subtitle = "Select a saved history row to open its persisted display transcript snapshot and metadata here."
     @Published private(set) var metadataItems: [MetadataItem] = []
     @Published private(set) var transcriptRows: [TranscriptRow] = []
     @Published private(set) var sourceStatuses: [SourcePipelineStatus] = []
@@ -56,7 +56,7 @@ final class SessionDetailViewModel: ObservableObject {
     @Published private(set) var actionMessage: String?
 
     var transcriptEmptyMessage: String {
-        "No transcript chunks were saved for this session."
+        "No display transcript chunks were saved for this session."
     }
 
     var compactMetadataLine: String {
@@ -137,7 +137,7 @@ final class SessionDetailViewModel: ObservableObject {
 
     func showNoSelection() {
         title = "Session detail"
-        subtitle = "Select a saved history row to open its persisted transcript snapshot and metadata here."
+        subtitle = "Select a saved history row to open its persisted display transcript snapshot and metadata here."
         metadataItems = []
         transcriptRows = []
         sourceStatuses = []
@@ -153,7 +153,7 @@ final class SessionDetailViewModel: ObservableObject {
 
     func showLoading(title: String?) {
         self.title = title ?? "Loading saved session"
-        subtitle = "Meetless is decoding the persisted transcript snapshot and metadata from the local session bundle."
+        subtitle = "Meetless is decoding the persisted display transcript snapshot and metadata from the local session bundle."
         metadataItems = []
         transcriptRows = []
         sourceStatuses = []
@@ -170,8 +170,8 @@ final class SessionDetailViewModel: ObservableObject {
     func showDetail(_ detail: PersistedSessionDetail) {
         title = detail.title
         subtitle = detail.isIncomplete
-            ? "This session was saved as incomplete. The transcript below is the exact persisted snapshot captured during recording."
-            : "This read-only detail shows the exact persisted transcript snapshot and saved metadata for the local session."
+            ? "This session was saved as incomplete. The transcript below is the display snapshot captured during recording."
+            : "This read-only detail shows the persisted display transcript snapshot and saved metadata for the local session."
         metadataItems = [
             MetadataItem(id: "state", label: "Saved session state", value: detail.isIncomplete ? "Incomplete" : "Completed"),
             MetadataItem(id: "started", label: "Started", value: Self.dateTimeFormatter.string(from: detail.startedAt)),
