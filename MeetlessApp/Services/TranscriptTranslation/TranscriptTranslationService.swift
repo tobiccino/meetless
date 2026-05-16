@@ -72,12 +72,153 @@ enum TranscriptTranslationProvider: String, CaseIterable, Identifiable, Codable,
     init(storedValue: String?) {
         self = storedValue.flatMap(Self.init(rawValue:)) ?? Self.defaultProvider
     }
+
+    var modelPresets: [TranscriptTranslationModelPreset] {
+        switch self {
+        case .gemini:
+            return [
+                TranscriptTranslationModelPreset(
+                    id: "gemini-2.5-flash",
+                    displayName: "Gemini 2.5 Flash",
+                    detail: "Stable, balanced price-performance for live translation."
+                ),
+                TranscriptTranslationModelPreset(
+                    id: "gemini-2.5-flash-lite",
+                    displayName: "Gemini 2.5 Flash-Lite",
+                    detail: "Stable, fastest and most cost-efficient."
+                ),
+                TranscriptTranslationModelPreset(
+                    id: "gemini-2.5-pro",
+                    displayName: "Gemini 2.5 Pro",
+                    detail: "Stable, stronger reasoning for difficult terminology."
+                ),
+                TranscriptTranslationModelPreset(
+                    id: "gemini-3-flash-preview",
+                    displayName: "Gemini 3 Flash Preview",
+                    detail: "Preview, newer balanced model for text output."
+                ),
+                TranscriptTranslationModelPreset(
+                    id: "gemini-3-pro-preview",
+                    displayName: "Gemini 3 Pro Preview",
+                    detail: "Preview, strongest reasoning; may cost more or have tighter limits."
+                ),
+                TranscriptTranslationModelPreset(
+                    id: "gemini-flash-latest",
+                    displayName: "Gemini Flash Latest",
+                    detail: "Alias that follows Google's latest Flash release."
+                ),
+                TranscriptTranslationModelPreset(
+                    id: "gemini-pro-latest",
+                    displayName: "Gemini Pro Latest",
+                    detail: "Alias that follows Google's latest Pro release."
+                ),
+                TranscriptTranslationModelPreset(
+                    id: "gemini-2.0-flash-lite",
+                    displayName: "Gemini 2.0 Flash-Lite",
+                    detail: "Older low-latency option for compatibility."
+                )
+            ]
+        case .openAI:
+            return []
+        }
+    }
+}
+
+struct TranscriptTranslationModelPreset: Identifiable, Equatable, Sendable {
+    let id: String
+    let displayName: String
+    let detail: String
 }
 
 enum TranscriptTranslationStatus: String, Codable, Sendable {
     case original
     case translated
     case failed
+}
+
+enum TranscriptTranslationDomain: String, CaseIterable, Identifiable, Codable, Sendable {
+    case general
+    case informationTechnology
+    case business
+    case finance
+    case legal
+    case healthcare
+    case education
+    case salesMarketing
+    case engineering
+    case customerSupport
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .general:
+            return "General"
+        case .informationTechnology:
+            return "Information Technology"
+        case .business:
+            return "Business"
+        case .finance:
+            return "Finance"
+        case .legal:
+            return "Legal"
+        case .healthcare:
+            return "Healthcare"
+        case .education:
+            return "Education"
+        case .salesMarketing:
+            return "Sales & Marketing"
+        case .engineering:
+            return "Engineering"
+        case .customerSupport:
+            return "Customer Support"
+        }
+    }
+
+    var promptInstruction: String {
+        switch self {
+        case .general:
+            return "Use natural meeting terminology without adding domain-specific assumptions."
+        case .informationTechnology:
+            return "Prefer standard software, cloud, security, database, API, infrastructure, and product-development terminology."
+        case .business:
+            return "Prefer clear business, operations, strategy, stakeholder, and project-management terminology."
+        case .finance:
+            return "Prefer accurate finance, accounting, budgeting, revenue, cost, investment, and reporting terminology."
+        case .legal:
+            return "Prefer accurate legal, compliance, contract, policy, and risk terminology while preserving the speaker's original intent."
+        case .healthcare:
+            return "Prefer accurate healthcare, clinical, patient-care, operations, and medical-administration terminology."
+        case .education:
+            return "Prefer accurate education, curriculum, assessment, learning, academic, and classroom terminology."
+        case .salesMarketing:
+            return "Prefer accurate sales, marketing, customer journey, campaign, pipeline, brand, and growth terminology."
+        case .engineering:
+            return "Prefer accurate engineering, product design, manufacturing, systems, quality, and technical operations terminology."
+        case .customerSupport:
+            return "Prefer accurate support, incident, troubleshooting, service-level, escalation, and customer-experience terminology."
+        }
+    }
+
+    static let defaultDomain: TranscriptTranslationDomain = .general
+
+    init(storedValue: String?) {
+        self = storedValue.flatMap(Self.init(rawValue:)) ?? Self.defaultDomain
+    }
+}
+
+struct TranscriptTranslationContext: Equatable, Sendable {
+    let domain: TranscriptTranslationDomain
+
+    static let defaultContext = TranscriptTranslationContext(
+        domain: .defaultDomain
+    )
+
+    init(
+        domain: TranscriptTranslationDomain = .defaultDomain
+    ) {
+        self.domain = domain
+    }
 }
 
 struct TranscriptTranslationProviderConfiguration: Equatable, Sendable {
@@ -91,6 +232,21 @@ struct TranscriptTranslationRequest: Equatable, Sendable {
     let sourceLanguage: TranscriptionLanguage
     let targetLanguage: TranscriptOutputLanguage
     let providerConfig: TranscriptTranslationProviderConfiguration
+    let context: TranscriptTranslationContext
+
+    init(
+        text: String,
+        sourceLanguage: TranscriptionLanguage,
+        targetLanguage: TranscriptOutputLanguage,
+        providerConfig: TranscriptTranslationProviderConfiguration,
+        context: TranscriptTranslationContext = .defaultContext
+    ) {
+        self.text = text
+        self.sourceLanguage = sourceLanguage
+        self.targetLanguage = targetLanguage
+        self.providerConfig = providerConfig
+        self.context = context
+    }
 }
 
 protocol TranscriptTranslating: Sendable {
@@ -129,6 +285,19 @@ struct TranscriptTranslationService: TranscriptTranslating {
     private let transport: any TranscriptTranslationHTTPTransport
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+
+    static func previewPrompt(
+        context: TranscriptTranslationContext,
+        sourceLanguage: String = "Source language",
+        targetLanguage: String = "Output language"
+    ) -> String {
+        prompt(
+            text: "[meeting transcript text]",
+            sourceLanguage: sourceLanguage,
+            targetLanguage: targetLanguage,
+            context: context
+        )
+    }
 
     init(
         geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
@@ -177,7 +346,8 @@ struct TranscriptTranslationService: TranscriptTranslating {
                             text: Self.prompt(
                                 text: text,
                                 sourceLanguage: request.sourceLanguage.displayName,
-                                targetLanguage: request.targetLanguage.displayName
+                                targetLanguage: request.targetLanguage.displayName,
+                                context: request.context
                             )
                         )
                     ]
@@ -212,7 +382,8 @@ struct TranscriptTranslationService: TranscriptTranslating {
                     content: Self.prompt(
                         text: text,
                         sourceLanguage: request.sourceLanguage.displayName,
-                        targetLanguage: request.targetLanguage.displayName
+                        targetLanguage: request.targetLanguage.displayName,
+                        context: request.context
                     )
                 )
             ]
@@ -339,15 +510,18 @@ struct TranscriptTranslationService: TranscriptTranslating {
     private static func prompt(
         text: String,
         sourceLanguage: String,
-        targetLanguage: String
+        targetLanguage: String,
+        context: TranscriptTranslationContext
     ) -> String {
-        """
-        Translate this meeting transcript window from \(sourceLanguage) to \(targetLanguage).
-        Return only the translated text. Preserve speaker meaning, numbers, names, and punctuation. Do not summarize, explain, add labels, or include the original text.
-
-        Transcript:
-        \(text)
-        """
+        var promptLines = [
+            "Translate this meeting transcript window from \(sourceLanguage) to \(targetLanguage).",
+            "Return only the translated text. Preserve speaker meaning, numbers, names, and punctuation. Do not summarize, explain, add labels, or include the original text.",
+            "Translation context: \(context.domain.displayName). \(context.domain.promptInstruction)"
+        ]
+        promptLines.append("")
+        promptLines.append("Transcript:")
+        promptLines.append(text)
+        return promptLines.joined(separator: "\n")
     }
 }
 

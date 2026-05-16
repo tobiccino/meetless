@@ -136,7 +136,7 @@ private struct ActiveRecordingPanel: View {
                     .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
             }
 
-            TranscriptRowsView(chunks: viewModel.transcriptChunks, maxHeight: 250)
+            TranscriptRowsView(rows: viewModel.liveTranscriptRows, maxHeight: 250)
         }
     }
 
@@ -192,15 +192,19 @@ private struct ActiveRecordingPanel: View {
     }
 
     private var transcriptHealthDetail: String {
-        if viewModel.transcriptChunks.isEmpty {
+        if viewModel.liveTranscriptRows.isEmpty {
             return "Waiting for speech"
         }
 
-        return "\(viewModel.transcriptChunks.count) row\(viewModel.transcriptChunks.count == 1 ? "" : "s") committed"
+        if viewModel.transcriptChunks.count == viewModel.liveTranscriptRows.count {
+            return "\(viewModel.transcriptChunks.count) row\(viewModel.transcriptChunks.count == 1 ? "" : "s") committed"
+        }
+
+        return "\(viewModel.liveTranscriptRows.count) live row\(viewModel.liveTranscriptRows.count == 1 ? "" : "s")"
     }
 
     private var transcriptHealthColor: Color {
-        viewModel.transcriptChunks.isEmpty
+        viewModel.liveTranscriptRows.isEmpty
             ? MeetlessDesignTokens.Colors.tertiaryText
             : MeetlessDesignTokens.Colors.successGreen
     }
@@ -210,9 +214,9 @@ private struct ActiveRecordingPanel: View {
     }
 
     private var transcriptCountLabel: String {
-        viewModel.transcriptChunks.isEmpty
+        viewModel.liveTranscriptRows.isEmpty
             ? "Live"
-            : "\(viewModel.transcriptChunks.count) row\(viewModel.transcriptChunks.count == 1 ? "" : "s")"
+            : "\(viewModel.liveTranscriptRows.count) row\(viewModel.liveTranscriptRows.count == 1 ? "" : "s")"
     }
 
     private var waveformActivityLevel: Double {
@@ -220,7 +224,7 @@ private struct ActiveRecordingPanel: View {
             return 0.36
         }
 
-        return viewModel.transcriptChunks.isEmpty ? 0.52 : 0.72
+        return viewModel.liveTranscriptRows.isEmpty ? 0.52 : 0.72
     }
 
     private func formattedElapsed(at date: Date) -> String {

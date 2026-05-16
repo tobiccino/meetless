@@ -26,6 +26,9 @@ final class TranscriptTranslationServiceTests: XCTestCase {
                     provider: .gemini,
                     model: "gemini-test",
                     baseURL: URL(string: "https://gemini.test")!
+                ),
+                context: TranscriptTranslationContext(
+                    domain: .informationTechnology
                 )
             )
         )
@@ -40,7 +43,9 @@ final class TranscriptTranslationServiceTests: XCTestCase {
         XCTAssertEqual(request.url.absoluteString, "https://gemini.test/v1beta/models/gemini-test:generateContent?key=gemini-key")
         XCTAssertEqual(request.headers["Content-Type"], "application/json")
         XCTAssertEqual(parts.count, 1)
-        XCTAssertNotNil(parts.first?["text"] as? String)
+        let prompt = try XCTUnwrap(parts.first?["text"] as? String)
+        XCTAssertTrue(prompt.contains("Translation context: Information Technology"))
+        XCTAssertTrue(prompt.contains("software, cloud, security, database, API"))
         XCTAssertNil(parts.first?["fileData"])
     }
 
@@ -68,6 +73,9 @@ final class TranscriptTranslationServiceTests: XCTestCase {
                     provider: .openAI,
                     model: "gemma4:31b",
                     baseURL: URL(string: "http://13.21.34.219:11434/v1/chat/completions")!
+                ),
+                context: TranscriptTranslationContext(
+                    domain: .finance
                 )
             )
         )
@@ -84,7 +92,10 @@ final class TranscriptTranslationServiceTests: XCTestCase {
         let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
         let message = try XCTUnwrap(messages.first)
         XCTAssertEqual(message["role"] as? String, "user")
-        XCTAssertTrue((message["content"] as? String)?.contains("Return only the translated text") == true)
+        let prompt = try XCTUnwrap(message["content"] as? String)
+        XCTAssertTrue(prompt.contains("Return only the translated text"))
+        XCTAssertTrue(prompt.contains("Translation context: Finance"))
+        XCTAssertTrue(prompt.contains("finance, accounting, budgeting"))
     }
 
     func testOpenAITranslationAppendsChatCompletionsPathForBaseURL() async throws {
@@ -177,6 +188,112 @@ final class TranscriptCoordinatorTranslationTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    func testIncompleteTranslationFragmentStaysLiveAndDoesNotCallTranslator() async throws {
+        let translator = FixtureTranscriptTranslator(result: .success("Chung ta can."))
+        let fixture = try Self.makeCoordinatorFixture(
+            worker: FixtureTranscriptWorker(text: "We need to"),
+            translator: translator,
+            sampleCount: 160,
+            minimumCommitSeconds: 0.01,
+            maximumCommitSeconds: 0.01
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        await fixture.coordinator.setTranslationConfiguration(
+            sourceLanguage: .english,
+            outputLanguage: .vietnamese,
+            providerConfig: Self.providerConfig()
+        )
+        await fixture.coordinator.ingest(fixture.chunk)
+
+        let row = try await MeetlessTestSupport.waitForValue(description: "pending live transcript row") {
+            let rows = await fixture.coordinator.currentLiveTranscriptRows()
+            return rows.first
+        }
+        let committedChunks = await fixture.coordinator.currentTranscriptChunks()
+        let requestCount = await translator.requestCount
+
+        XCTAssertEqual(row.text, "We need to")
+        XCTAssertEqual(row.state, .pendingTranscript)
+        XCTAssertTrue(committedChunks.isEmpty)
+        XCTAssertEqual(requestCount, 0)
+    }
+
+    func testSplitTranscriptFragmentsAreMergedBeforeTranslationRequest() async throws {
+        let translator = FixtureTranscriptTranslator(result: .success("Chung ta can review API."))
+        let fixture = try Self.makeCoordinatorFixture(
+            worker: SequenceTranscriptWorker(texts: [
+                "We need to",
+                "review the API."
+            ]),
+            translator: translator,
+            sampleCount: 320,
+            minimumCommitSeconds: 0.01,
+            maximumCommitSeconds: 0.01
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        await fixture.coordinator.setTranslationConfiguration(
+            sourceLanguage: .english,
+            outputLanguage: .vietnamese,
+            providerConfig: Self.providerConfig(),
+            context: TranscriptTranslationContext(
+                domain: .informationTechnology
+            )
+        )
+        await fixture.coordinator.ingest(fixture.chunk)
+
+        let chunk = try await MeetlessTestSupport.waitForValue(description: "merged translated chunk") {
+            let chunks = await fixture.coordinator.currentTranscriptChunks()
+            return chunks.first
+        }
+        let requests = await translator.requests
+        let request = try XCTUnwrap(requests.first)
+
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(request.text, "We need to review the API.")
+        XCTAssertEqual(request.context.domain, .informationTechnology)
+        XCTAssertEqual(chunk.text, "Chung ta can review API.")
+        XCTAssertEqual(chunk.originalText, "We need to review the API.")
+        XCTAssertEqual(chunk.startFrameIndex, 0)
+        XCTAssertEqual(chunk.endFrameIndex, 320)
+        XCTAssertEqual(chunk.translationStatus, .translated)
+    }
+
+    func testStopFlushesPendingTranslationFragment() async throws {
+        let translator = FixtureTranscriptTranslator(result: .success("Chung ta can."))
+        let fixture = try Self.makeCoordinatorFixture(
+            worker: FixtureTranscriptWorker(text: "We need to"),
+            translator: translator,
+            sampleCount: 160,
+            minimumCommitSeconds: 0.01,
+            maximumCommitSeconds: 0.01
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        await fixture.coordinator.setTranslationConfiguration(
+            sourceLanguage: .english,
+            outputLanguage: .vietnamese,
+            providerConfig: Self.providerConfig()
+        )
+        await fixture.coordinator.ingest(fixture.chunk)
+        _ = try await MeetlessTestSupport.waitForValue(description: "pending row before stop") {
+            let rows = await fixture.coordinator.currentLiveTranscriptRows()
+            return rows.first
+        }
+
+        let frozenChunks = await fixture.coordinator.freezeVisibleSnapshot()
+        let requests = await translator.requests
+        let request = try XCTUnwrap(requests.first)
+        let chunk = try XCTUnwrap(frozenChunks.first)
+
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(request.text, "We need to")
+        XCTAssertEqual(chunk.text, "Chung ta can.")
+        XCTAssertEqual(chunk.originalText, "We need to")
+        XCTAssertEqual(chunk.translationStatus, .translated)
+    }
+
     func testSuccessfulTranslationCommitsTranslatedTextAndHiddenOriginalText() async throws {
         let translator = FixtureTranscriptTranslator(result: .success("Xin chao nhom."))
         let fixture = try Self.makeCoordinatorFixture(workerText: "Hello team.", translator: translator)
@@ -185,7 +302,10 @@ final class TranscriptCoordinatorTranslationTests: XCTestCase {
         await fixture.coordinator.setTranslationConfiguration(
             sourceLanguage: .english,
             outputLanguage: .vietnamese,
-            providerConfig: Self.providerConfig()
+            providerConfig: Self.providerConfig(),
+            context: TranscriptTranslationContext(
+                domain: .informationTechnology
+            )
         )
         await fixture.coordinator.ingest(fixture.chunk)
 
@@ -203,6 +323,7 @@ final class TranscriptCoordinatorTranslationTests: XCTestCase {
         XCTAssertEqual(chunk.translationProvider, .gemini)
         XCTAssertEqual(chunk.translationStatus, .translated)
         XCTAssertEqual(request.targetLanguage, .vietnamese)
+        XCTAssertEqual(request.context.domain, .informationTechnology)
     }
 
     func testFailedTranslationCommitsOriginalTextAndMarksHealthDegraded() async throws {
@@ -243,15 +364,36 @@ final class TranscriptCoordinatorTranslationTests: XCTestCase {
         translator: FixtureTranscriptTranslator,
         chunk: SourceAudioChunk
     ) {
-        let directoryURL = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "TranscriptCoordinatorTranslationTests")
-        let waveURL = directoryURL.appendingPathComponent("meeting.wav", isDirectory: false)
-        try MeetlessTestSupport.writePCM16WaveFile(to: waveURL, sampleCount: 320)
-        let coordinator = TranscriptCoordinator(
-            meetingWorker: FixtureTranscriptWorker(text: workerText),
-            meWorker: FixtureTranscriptWorker(text: ""),
+        try makeCoordinatorFixture(
+            worker: FixtureTranscriptWorker(text: workerText),
             translator: translator,
+            sampleCount: 320,
             minimumCommitSeconds: 0.01,
             maximumCommitSeconds: 0.02
+        )
+    }
+
+    private static func makeCoordinatorFixture(
+        worker: any TranscriptWindowTranscribing,
+        translator: FixtureTranscriptTranslator,
+        sampleCount: Int,
+        minimumCommitSeconds: Double,
+        maximumCommitSeconds: Double
+    ) throws -> (
+        directoryURL: URL,
+        coordinator: TranscriptCoordinator,
+        translator: FixtureTranscriptTranslator,
+        chunk: SourceAudioChunk
+    ) {
+        let directoryURL = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "TranscriptCoordinatorTranslationTests")
+        let waveURL = directoryURL.appendingPathComponent("meeting.wav", isDirectory: false)
+        try MeetlessTestSupport.writePCM16WaveFile(to: waveURL, sampleCount: sampleCount)
+        let coordinator = TranscriptCoordinator(
+            meetingWorker: worker,
+            meWorker: FixtureTranscriptWorker(text: ""),
+            translator: translator,
+            minimumCommitSeconds: minimumCommitSeconds,
+            maximumCommitSeconds: maximumCommitSeconds
         )
         let chunk = SourceAudioChunk(
             source: .meeting,
@@ -259,7 +401,7 @@ final class TranscriptCoordinatorTranslationTests: XCTestCase {
             sampleRate: 16_000,
             channelCount: 1,
             startFrameIndex: 0,
-            endFrameIndex: 320
+            endFrameIndex: Int64(sampleCount)
         )
         return (directoryURL, coordinator, translator, chunk)
     }
@@ -278,6 +420,19 @@ private struct FixtureTranscriptWorker: TranscriptWindowTranscribing {
 
     func transcribeIncrementalWindow(samples: [Float]) async throws -> String {
         text
+    }
+}
+
+private actor SequenceTranscriptWorker: TranscriptWindowTranscribing {
+    private var texts: [String]
+
+    init(texts: [String]) {
+        self.texts = texts
+    }
+
+    func transcribeIncrementalWindow(samples: [Float]) async throws -> String {
+        guard !texts.isEmpty else { return "" }
+        return texts.removeFirst()
     }
 }
 

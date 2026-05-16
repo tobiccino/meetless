@@ -6,6 +6,7 @@ actor WhisperSourceWorker {
 
     private let assets: WhisperBridgeAssets
     private var language: TranscriptionLanguage
+    private var selectedModelURL: URL?
     private var contextHandle: WhisperContextHandle?
     private var loadedModelURL: URL?
 
@@ -23,15 +24,28 @@ actor WhisperSourceWorker {
         self.language = language
     }
 
+    func setModelURL(_ url: URL) {
+        selectedModelURL = url
+    }
+
     func prepareBundledModel() throws -> String {
         let modelURL = try assets.bundledModelURL()
+        try prepareModel(at: modelURL)
+        return modelURL.lastPathComponent
+    }
 
+    func prepareSelectedModel() throws -> String {
+        let modelURL = try selectedModelURL ?? assets.bundledModelURL()
+        try prepareModel(at: modelURL)
+        return modelURL.lastPathComponent
+    }
+
+    private func prepareModel(at modelURL: URL) throws {
         if loadedModelURL == modelURL, contextHandle != nil {
-            return modelURL.lastPathComponent
+            return
         }
 
         try loadModel(at: modelURL)
-        return modelURL.lastPathComponent
     }
 
     func transcribeBundledSmokeSample() async throws -> WhisperSmokeTranscription {
@@ -44,7 +58,7 @@ actor WhisperSourceWorker {
             throw WhisperBridgeError.emptyTranscription
         }
 
-        _ = try prepareBundledModel()
+        _ = try prepareSelectedModel()
         let threadCount = preferredThreadCount()
         return try transcribe(samples: samples, threadCount: threadCount, language: language)
     }
@@ -55,7 +69,7 @@ actor WhisperSourceWorker {
     }
 
     private func transcribeWaveFile(_ url: URL) async throws -> WhisperSmokeTranscription {
-        let modelName = try prepareBundledModel()
+        let modelName = try prepareSelectedModel()
         let samples = try decodePCM16WaveFile(url)
         let threadCount = preferredThreadCount()
         let text = try transcribe(samples: samples, threadCount: threadCount, language: language)

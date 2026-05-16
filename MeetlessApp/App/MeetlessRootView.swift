@@ -185,33 +185,7 @@ private struct SettingsView: View {
                         .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
                 }
 
-                VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Transcription")
-                            .font(MeetlessDesignTokens.Typography.windowTitle)
-                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                            .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
-                        Text("Applies to the next recording and smoke transcription run.")
-                            .font(MeetlessDesignTokens.Typography.caption)
-                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
-                    }
-
-                    Picker("Language", selection: $viewModel.transcriptionLanguage) {
-                        ForEach(TranscriptionLanguage.allCases) { language in
-                            Text(language.displayName).tag(language)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 320)
-                }
-                .padding(18)
-                .background(MeetlessDesignTokens.Colors.windowBackground)
-                .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
-                        .stroke(MeetlessDesignTokens.Colors.separator)
-                )
+                transcriptionCard
 
                 translationCard
 
@@ -312,6 +286,172 @@ private struct SettingsView: View {
         }
     }
 
+    private var transcriptionCard: some View {
+        VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Transcription")
+                    .font(MeetlessDesignTokens.Typography.windowTitle)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                Text("Applies to the next recording and smoke transcription run.")
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+            }
+
+            Picker("Language", selection: $viewModel.transcriptionLanguage) {
+                ForEach(TranscriptionLanguage.allCases) { language in
+                    Text(language.displayName).tag(language)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 320)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Whisper model")
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+
+                ForEach(viewModel.transcriptionModelStatuses) { status in
+                    transcriptionModelRow(status)
+                }
+            }
+        }
+        .padding(18)
+        .background(MeetlessDesignTokens.Colors.windowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                .stroke(MeetlessDesignTokens.Colors.separator)
+        )
+    }
+
+    private func transcriptionModelRow(_ status: TranscriptionModelStatus) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button {
+                viewModel.selectTranscriptionModel(status.id)
+            } label: {
+                Image(systemName: status.isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(status.isSelected ? MeetlessDesignTokens.Colors.primaryBlue : MeetlessDesignTokens.Colors.tertiaryText)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .disabled(!status.canSelect)
+            .accessibilityLabel("Select \(status.preset.displayName)")
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(status.preset.displayName)
+                        .font(MeetlessDesignTokens.Typography.body.weight(.semibold))
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(status.canSelect ? MeetlessDesignTokens.Colors.primaryText : MeetlessDesignTokens.Colors.secondaryText)
+
+                    Text(status.preset.qualityLabel)
+                        .font(MeetlessDesignTokens.Typography.caption)
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    transcriptionModelDetailLine(
+                        systemImage: "internaldrive",
+                        label: "Storage",
+                        value: status.preset.diskSizeLabel
+                    )
+                    transcriptionModelDetailLine(
+                        systemImage: "memorychip",
+                        label: "CPU/RAM",
+                        value: status.preset.resourceLabel
+                    )
+                    transcriptionModelDetailLine(
+                        systemImage: "globe",
+                        label: "Language",
+                        value: status.preset.languageLabel
+                    )
+                    transcriptionModelDetailLine(
+                        systemImage: "scope",
+                        label: "Best for",
+                        value: status.preset.recommendation
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .trailing, spacing: 8) {
+                Text(status.statusText)
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.medium))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .frame(width: 118, alignment: .trailing)
+
+                if case .downloading(let progress) = status.availability {
+                    ProgressView(value: progress)
+                        .frame(width: 110)
+                }
+
+                transcriptionModelAction(status)
+            }
+        }
+        .padding(12)
+        .background(MeetlessDesignTokens.Colors.appBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+    }
+
+    private func transcriptionModelDetailLine(systemImage: String, label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                .frame(width: 14, alignment: .center)
+
+            Text(label)
+                .font(MeetlessDesignTokens.Typography.caption.weight(.medium))
+                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                .frame(width: 56, alignment: .leading)
+
+            Text(value)
+                .font(MeetlessDesignTokens.Typography.caption)
+                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func transcriptionModelAction(_ status: TranscriptionModelStatus) -> some View {
+        switch status.availability {
+        case .downloading:
+            Button {
+                viewModel.cancelTranscriptionModelDownload(status.id)
+            } label: {
+                Label("Cancel", systemImage: "xmark.circle")
+            }
+            .buttonStyle(.bordered)
+        case .missing, .failed:
+            Button {
+                viewModel.downloadTranscriptionModel(status.id)
+            } label: {
+                Label("Download", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.bordered)
+            .disabled(!status.canDownload)
+        case .installed:
+            Button(role: .destructive) {
+                viewModel.removeTranscriptionModel(status.id)
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+            .buttonStyle(.bordered)
+            .disabled(!status.canRemove)
+        case .bundled:
+            EmptyView()
+        }
+    }
+
     private var translationCard: some View {
         VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
             VStack(alignment: .leading, spacing: 6) {
@@ -341,12 +481,74 @@ private struct SettingsView: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
 
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Translation context")
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+
+                Picker("Translation context", selection: $viewModel.transcriptTranslationDomain) {
+                    ForEach(TranscriptTranslationDomain.allCases) { domain in
+                        Text(domain.displayName).tag(domain)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: 320, alignment: .leading)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Prompt preview")
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+
+                ScrollView {
+                    Text(viewModel.translationPromptPreview)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(minHeight: 118, maxHeight: 158)
+                .background(MeetlessDesignTokens.Colors.appBackground)
+                .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                        .stroke(MeetlessDesignTokens.Colors.separator)
+                )
+            }
+
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Model")
                         .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
                         .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                         .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                    if !viewModel.translationModelPresets.isEmpty {
+                        Picker(
+                            "Model preset",
+                            selection: Binding(
+                                get: { viewModel.selectedTranslationModelPresetID },
+                                set: { viewModel.selectTranslationModelPreset($0) }
+                            )
+                        ) {
+                            ForEach(viewModel.translationModelPresets) { preset in
+                                Text(preset.displayName).tag(preset.id)
+                            }
+                            Text("Custom").tag(GeminiSettingsViewModel.customTranslationModelPresetID)
+                        }
+                        .pickerStyle(.menu)
+
+                        if let selectedPreset = viewModel.translationModelPresets.first(where: { $0.id == viewModel.selectedTranslationModelPresetID }) {
+                            Text(selectedPreset.detail)
+                                .font(MeetlessDesignTokens.Typography.caption)
+                                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
                     TextField(viewModel.transcriptTranslationProvider.defaultModel, text: $viewModel.translationModel)
                         .textFieldStyle(.roundedBorder)
                         .font(MeetlessDesignTokens.Typography.body)

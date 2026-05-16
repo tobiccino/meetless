@@ -105,6 +105,58 @@ struct CommittedTranscriptChunk: Identifiable, Codable, Sendable {
     }
 }
 
+enum TranscriptDisplayRowState: Equatable, Sendable {
+    case committed
+    case pendingTranscript
+    case pendingTranslation
+}
+
+struct TranscriptDisplayRow: Identifiable, Sendable {
+    let id: String
+    let source: RecordingSourceKind
+    let text: String
+    let startFrameIndex: Int64
+    let endFrameIndex: Int64
+    let sampleRate: Double
+    let sequenceNumber: Int
+    let state: TranscriptDisplayRowState
+
+    init(chunk: CommittedTranscriptChunk) {
+        self.id = chunk.id.uuidString
+        self.source = chunk.source
+        self.text = chunk.text
+        self.startFrameIndex = chunk.startFrameIndex
+        self.endFrameIndex = chunk.endFrameIndex
+        self.sampleRate = chunk.sampleRate
+        self.sequenceNumber = chunk.sequenceNumber
+        self.state = .committed
+    }
+
+    init(
+        id: String,
+        source: RecordingSourceKind,
+        text: String,
+        startFrameIndex: Int64,
+        endFrameIndex: Int64,
+        sampleRate: Double,
+        sequenceNumber: Int,
+        state: TranscriptDisplayRowState
+    ) {
+        self.id = id
+        self.source = source
+        self.text = text
+        self.startFrameIndex = startFrameIndex
+        self.endFrameIndex = endFrameIndex
+        self.sampleRate = sampleRate
+        self.sequenceNumber = sequenceNumber
+        self.state = state
+    }
+
+    var startTime: TimeInterval {
+        Double(startFrameIndex) / sampleRate
+    }
+}
+
 struct RecordingStatusSnapshot: Sendable {
     let phase: RecordingShellPhase
     let headline: String
@@ -113,6 +165,27 @@ struct RecordingStatusSnapshot: Sendable {
     let sourceStatuses: [SourcePipelineStatus]
     let repairActions: [PermissionRepairAction]
     let transcriptChunks: [CommittedTranscriptChunk]
+    let liveTranscriptRows: [TranscriptDisplayRow]
+
+    init(
+        phase: RecordingShellPhase,
+        headline: String,
+        detail: String,
+        latestEvent: String,
+        sourceStatuses: [SourcePipelineStatus],
+        repairActions: [PermissionRepairAction],
+        transcriptChunks: [CommittedTranscriptChunk],
+        liveTranscriptRows: [TranscriptDisplayRow]? = nil
+    ) {
+        self.phase = phase
+        self.headline = headline
+        self.detail = detail
+        self.latestEvent = latestEvent
+        self.sourceStatuses = sourceStatuses
+        self.repairActions = repairActions
+        self.transcriptChunks = transcriptChunks
+        self.liveTranscriptRows = liveTranscriptRows ?? transcriptChunks.map(TranscriptDisplayRow.init(chunk:))
+    }
 }
 
 struct SmokeTranscriptionSnapshot: Sendable {
@@ -260,9 +333,69 @@ private struct ActiveTranscriptTranslationConfiguration: Sendable {
     let sourceLanguage: TranscriptionLanguage
     let outputLanguage: TranscriptOutputLanguage
     let providerConfig: TranscriptTranslationProviderConfiguration
+    let context: TranscriptTranslationContext
 
     var shouldTranslate: Bool {
         TranscriptOutputLanguage(transcriptionLanguage: sourceLanguage) != outputLanguage
+    }
+}
+
+private enum PendingTranslationState: Equatable, Sendable {
+    case awaitingBoundary
+    case translating
+}
+
+private struct PendingTranslationSegment: Sendable {
+    let id: String
+    let source: RecordingSourceKind
+    let startFrameIndex: Int64
+    var endFrameIndex: Int64
+    let sampleRate: Double
+    var parts: [String]
+    var state: PendingTranslationState
+
+    init(
+        source: RecordingSourceKind,
+        text: String,
+        window: TranscriptCommitWindow,
+        state: PendingTranslationState = .awaitingBoundary
+    ) {
+        self.id = "\(source.rawValue)-\(window.startFrameIndex)"
+        self.source = source
+        self.startFrameIndex = window.startFrameIndex
+        self.endFrameIndex = window.endFrameIndex
+        self.sampleRate = window.sampleRate
+        self.parts = [text]
+        self.state = state
+    }
+
+    var text: String {
+        parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    var frameCount: Int64 {
+        endFrameIndex - startFrameIndex
+    }
+
+    var displayRow: TranscriptDisplayRow {
+        TranscriptDisplayRow(
+            id: "pending-\(id)",
+            source: source,
+            text: text,
+            startFrameIndex: startFrameIndex,
+            endFrameIndex: endFrameIndex,
+            sampleRate: sampleRate,
+            sequenceNumber: Int.max,
+            state: state == .translating ? .pendingTranslation : .pendingTranscript
+        )
+    }
+
+    mutating func append(_ text: String, window: TranscriptCommitWindow) {
+        parts.append(text)
+        endFrameIndex = window.endFrameIndex
     }
 }
 
@@ -270,6 +403,8 @@ actor TranscriptCoordinator {
     private let logger = Logger(subsystem: "com.themrb.meetless", category: "transcript-coordinator")
     private let minimumCommitFrameCount: Int
     private let maximumCommitFrameCount: Int
+    private let maximumPendingTranslationSeconds: Double = 16
+    private let maximumPendingTranslationCharacterCount = 500
     private let maximumRetryCountPerWindow = 3
     private let workers: [RecordingSourceKind: any TranscriptWindowTranscribing]
     private let translator: any TranscriptTranslating
@@ -284,6 +419,7 @@ actor TranscriptCoordinator {
     private var degradedSourceStatuses: [RecordingSourceKind: SourcePipelineStatus] = [:]
     private var degradationLatestEvent: String?
     private var translationConfiguration: ActiveTranscriptTranslationConfiguration?
+    private var pendingTranslationSegments: [RecordingSourceKind: PendingTranslationSegment] = [:]
 
     init(
         meetingWorker: any TranscriptWindowTranscribing,
@@ -313,6 +449,7 @@ actor TranscriptCoordinator {
         nextSequenceNumber = 0
         degradedSourceStatuses.removeAll()
         degradationLatestEvent = nil
+        pendingTranslationSegments.removeAll()
         lanes = [
             .meeting: SourceTranscriptLane(source: .meeting),
             .me: SourceTranscriptLane(source: .me)
@@ -326,12 +463,14 @@ actor TranscriptCoordinator {
     func setTranslationConfiguration(
         sourceLanguage: TranscriptionLanguage,
         outputLanguage: TranscriptOutputLanguage,
-        providerConfig: TranscriptTranslationProviderConfiguration
+        providerConfig: TranscriptTranslationProviderConfiguration,
+        context: TranscriptTranslationContext = .defaultContext
     ) {
         translationConfiguration = ActiveTranscriptTranslationConfiguration(
             sourceLanguage: sourceLanguage,
             outputLanguage: outputLanguage,
-            providerConfig: providerConfig
+            providerConfig: providerConfig,
+            context: context
         )
     }
 
@@ -343,15 +482,20 @@ actor TranscriptCoordinator {
         scheduleTranscriptionIfNeeded(for: chunk.source)
     }
 
-    func freezeVisibleSnapshot() -> [CommittedTranscriptChunk] {
+    func freezeVisibleSnapshot() async -> [CommittedTranscriptChunk] {
         sessionGeneration += 1
         isFrozen = true
         snapshotHandler = nil
+        await flushPendingTranslationSegmentsForStop()
         return orderedCommittedChunks()
     }
 
     func currentTranscriptChunks() -> [CommittedTranscriptChunk] {
         orderedCommittedChunks()
+    }
+
+    func currentLiveTranscriptRows() -> [TranscriptDisplayRow] {
+        liveTranscriptRows()
     }
 
     func currentHealthSnapshot() -> TranscriptHealthSnapshot {
@@ -428,10 +572,10 @@ actor TranscriptCoordinator {
         case let .transcript(originalText):
             lane.markTranscriptionFinished()
             retryCounts[windowKey] = nil
-            nextSequenceNumber += 1
-            let translation = await translatedTranscriptText(
+            let translation = await translatedTranscriptChunk(
                 originalText,
-                source: source
+                source: source,
+                window: window
             )
             if let degradedStatus = translation.degradedStatus {
                 degradedStatusToRecord = degradedStatus
@@ -439,20 +583,15 @@ actor TranscriptCoordinator {
             if let degradedEvent = translation.degradedEvent {
                 degradedEventToRecord = degradedEvent
             }
-            let candidateChunk = CommittedTranscriptChunk(
-                id: UUID(),
-                source: window.source,
-                text: translation.text,
-                startFrameIndex: window.startFrameIndex,
-                endFrameIndex: window.endFrameIndex,
-                sampleRate: window.sampleRate,
-                sequenceNumber: nextSequenceNumber,
-                originalText: translation.originalText,
-                sourceLanguageCode: translation.sourceLanguageCode,
-                outputLanguageCode: translation.outputLanguageCode,
-                translationProvider: translation.translationProvider,
-                translationStatus: translation.translationStatus
-            )
+
+            guard expectedGeneration == sessionGeneration, !isFrozen else {
+                return
+            }
+
+            guard let candidateChunk = translation.chunk else {
+                snapshotToPersist = nil
+                break
+            }
 
             if shouldSuppressCommittedChunk(candidateChunk) {
                 snapshotToPersist = nil
@@ -501,36 +640,88 @@ actor TranscriptCoordinator {
         scheduleTranscriptionIfNeeded(for: source)
     }
 
-    private func translatedTranscriptText(
+    private func translatedTranscriptChunk(
         _ text: String,
-        source: RecordingSourceKind
+        source: RecordingSourceKind,
+        window: TranscriptCommitWindow
     ) async -> (
-        text: String,
-        originalText: String?,
-        sourceLanguageCode: String?,
-        outputLanguageCode: String?,
-        translationProvider: TranscriptTranslationProvider?,
-        translationStatus: TranscriptTranslationStatus?,
+        chunk: CommittedTranscriptChunk?,
         degradedStatus: SourcePipelineStatus?,
         degradedEvent: String?
     ) {
         guard let translationConfiguration else {
-            return (text, nil, nil, nil, nil, nil, nil, nil)
+            return (
+                makeCommittedChunk(
+                    source: window.source,
+                    text: text,
+                    window: window
+                ),
+                nil,
+                nil
+            )
         }
 
         let sourceLanguageCode = translationConfiguration.sourceLanguage.rawValue
         let outputLanguageCode = translationConfiguration.outputLanguage.rawValue
         guard translationConfiguration.shouldTranslate else {
-            return (text, nil, sourceLanguageCode, outputLanguageCode, nil, .original, nil, nil)
+            return (
+                makeCommittedChunk(
+                    source: window.source,
+                    text: text,
+                    window: window,
+                    sourceLanguageCode: sourceLanguageCode,
+                    outputLanguageCode: outputLanguageCode,
+                    translationStatus: .original
+                ),
+                nil,
+                nil
+            )
         }
 
+        var pendingSegment = pendingTranslationSegments[source] ?? PendingTranslationSegment(
+            source: source,
+            text: text,
+            window: window
+        )
+        if pendingTranslationSegments[source] != nil {
+            pendingSegment.append(text, window: window)
+        }
+
+        guard shouldFlushPendingTranslationSegment(pendingSegment) else {
+            pendingTranslationSegments[source] = pendingSegment
+            return (nil, nil, nil)
+        }
+
+        pendingSegment.state = .translating
+        pendingTranslationSegments[source] = pendingSegment
+
+        let chunk = await translatePendingSegment(
+            pendingSegment,
+            translationConfiguration: translationConfiguration
+        )
+        pendingTranslationSegments[source] = nil
+        return chunk
+    }
+
+    private func translatePendingSegment(
+        _ pendingSegment: PendingTranslationSegment,
+        translationConfiguration: ActiveTranscriptTranslationConfiguration
+    ) async -> (
+        chunk: CommittedTranscriptChunk?,
+        degradedStatus: SourcePipelineStatus?,
+        degradedEvent: String?
+    ) {
+        let sourceLanguageCode = translationConfiguration.sourceLanguage.rawValue
+        let outputLanguageCode = translationConfiguration.outputLanguage.rawValue
+        let originalText = pendingSegment.text
         do {
             let translatedText = try await translator.translate(
                 TranscriptTranslationRequest(
-                    text: text,
+                    text: originalText,
                     sourceLanguage: translationConfiguration.sourceLanguage,
                     targetLanguage: translationConfiguration.outputLanguage,
-                    providerConfig: translationConfiguration.providerConfig
+                    providerConfig: translationConfiguration.providerConfig,
+                    context: translationConfiguration.context
                 )
             )
             let displayText = translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -541,12 +732,18 @@ actor TranscriptCoordinator {
             }
 
             return (
-                displayText,
-                text,
-                sourceLanguageCode,
-                outputLanguageCode,
-                translationConfiguration.providerConfig.provider,
-                .translated,
+                makeCommittedChunk(
+                    source: pendingSegment.source,
+                    text: displayText,
+                    startFrameIndex: pendingSegment.startFrameIndex,
+                    endFrameIndex: pendingSegment.endFrameIndex,
+                    sampleRate: pendingSegment.sampleRate,
+                    originalText: originalText,
+                    sourceLanguageCode: sourceLanguageCode,
+                    outputLanguageCode: outputLanguageCode,
+                    translationProvider: translationConfiguration.providerConfig.provider,
+                    translationStatus: .translated
+                ),
                 nil,
                 nil
             )
@@ -556,22 +753,128 @@ actor TranscriptCoordinator {
                 provider: translationConfiguration.providerConfig.provider
             )
             let degradedStatus = SourcePipelineStatus(
-                source: source,
+                source: pendingSegment.source,
                 detail: safeMessage,
                 state: .degraded
             )
-            let degradedEvent = "\(source.rawValue) transcript translation failed. Meetless kept the original transcript text so recording and Stop can continue."
-            logger.error("translation failed for \(source.rawValue, privacy: .public): \(safeMessage, privacy: .public)")
+            let degradedEvent = "\(pendingSegment.source.rawValue) transcript translation failed. Meetless kept the original transcript text so recording and Stop can continue."
+            logger.error("translation failed for \(pendingSegment.source.rawValue, privacy: .public): \(safeMessage, privacy: .public)")
             return (
-                text,
-                nil,
-                sourceLanguageCode,
-                outputLanguageCode,
-                translationConfiguration.providerConfig.provider,
-                .failed,
+                makeCommittedChunk(
+                    source: pendingSegment.source,
+                    text: originalText,
+                    startFrameIndex: pendingSegment.startFrameIndex,
+                    endFrameIndex: pendingSegment.endFrameIndex,
+                    sampleRate: pendingSegment.sampleRate,
+                    sourceLanguageCode: sourceLanguageCode,
+                    outputLanguageCode: outputLanguageCode,
+                    translationProvider: translationConfiguration.providerConfig.provider,
+                    translationStatus: .failed
+                ),
                 degradedStatus,
                 degradedEvent
             )
+        }
+    }
+
+    private func makeCommittedChunk(
+        source: RecordingSourceKind,
+        text: String,
+        window: TranscriptCommitWindow,
+        originalText: String? = nil,
+        sourceLanguageCode: String? = nil,
+        outputLanguageCode: String? = nil,
+        translationProvider: TranscriptTranslationProvider? = nil,
+        translationStatus: TranscriptTranslationStatus? = nil
+    ) -> CommittedTranscriptChunk {
+        makeCommittedChunk(
+            source: source,
+            text: text,
+            startFrameIndex: window.startFrameIndex,
+            endFrameIndex: window.endFrameIndex,
+            sampleRate: window.sampleRate,
+            originalText: originalText,
+            sourceLanguageCode: sourceLanguageCode,
+            outputLanguageCode: outputLanguageCode,
+            translationProvider: translationProvider,
+            translationStatus: translationStatus
+        )
+    }
+
+    private func makeCommittedChunk(
+        source: RecordingSourceKind,
+        text: String,
+        startFrameIndex: Int64,
+        endFrameIndex: Int64,
+        sampleRate: Double,
+        originalText: String? = nil,
+        sourceLanguageCode: String? = nil,
+        outputLanguageCode: String? = nil,
+        translationProvider: TranscriptTranslationProvider? = nil,
+        translationStatus: TranscriptTranslationStatus? = nil
+    ) -> CommittedTranscriptChunk {
+        nextSequenceNumber += 1
+        return CommittedTranscriptChunk(
+            id: UUID(),
+            source: source,
+            text: text,
+            startFrameIndex: startFrameIndex,
+            endFrameIndex: endFrameIndex,
+            sampleRate: sampleRate,
+            sequenceNumber: nextSequenceNumber,
+            originalText: originalText,
+            sourceLanguageCode: sourceLanguageCode,
+            outputLanguageCode: outputLanguageCode,
+            translationProvider: translationProvider,
+            translationStatus: translationStatus
+        )
+    }
+
+    private func shouldFlushPendingTranslationSegment(_ segment: PendingTranslationSegment) -> Bool {
+        let maximumPendingTranslationFrameCount = Int64(maximumPendingTranslationSeconds * segment.sampleRate)
+        return Self.hasTerminalSentenceBoundary(segment.text)
+            || segment.frameCount >= maximumPendingTranslationFrameCount
+            || segment.text.count >= maximumPendingTranslationCharacterCount
+    }
+
+    private func flushPendingTranslationSegmentsForStop() async {
+        guard let translationConfiguration, translationConfiguration.shouldTranslate else {
+            pendingTranslationSegments.removeAll()
+            return
+        }
+
+        for source in RecordingSourceKind.allCases {
+            guard var pendingSegment = pendingTranslationSegments[source] else { continue }
+            pendingSegment.state = .translating
+            pendingTranslationSegments[source] = pendingSegment
+            let result = await translatePendingSegment(
+                pendingSegment,
+                translationConfiguration: translationConfiguration
+            )
+            pendingTranslationSegments[source] = nil
+
+            if let degradedStatus = result.degradedStatus {
+                degradedSourceStatuses[source] = degradedStatus
+            }
+            if let degradedEvent = result.degradedEvent {
+                degradationLatestEvent = degradedEvent
+            }
+            guard let chunk = result.chunk, !shouldSuppressCommittedChunk(chunk) else { continue }
+            committedChunks.append(chunk)
+            pruneEchoChunks(preferredChunk: chunk)
+        }
+    }
+
+    private func liveTranscriptRows() -> [TranscriptDisplayRow] {
+        let committedRows = committedChunks.map(TranscriptDisplayRow.init(chunk:))
+        let pendingRows = pendingTranslationSegments.values.map(\.displayRow)
+
+        return (committedRows + pendingRows).sorted { lhs, rhs in
+            if lhs.startFrameIndex == rhs.startFrameIndex {
+                return lhs.sequenceNumber < rhs.sequenceNumber
+            }
+
+            return lhs.startFrameIndex < rhs.startFrameIndex
         }
     }
 
@@ -646,6 +949,17 @@ actor TranscriptCoordinator {
         }
 
         return trimmedText
+    }
+
+    private static func hasTerminalSentenceBoundary(_ text: String) -> Bool {
+        let closingCharacters = CharacterSet(charactersIn: "\"'”’)]}»")
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: closingCharacters)
+        guard let lastScalar = trimmedText.unicodeScalars.last else {
+            return false
+        }
+
+        return CharacterSet(charactersIn: ".!?…。！？").contains(lastScalar)
     }
 
     private static func safeTranslationFailureMessage(
@@ -891,6 +1205,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
     private let meWorker: WhisperSourceWorker
     private let transcriptCoordinator: TranscriptCoordinator
     private let transcriptionSettingsStore: any TranscriptionSettingsStoring
+    private let transcriptionModelLibrary: TranscriptionModelLibrary
     private let sessionRepository = SessionRepository()
     private let permissionGate = RecordingPermissionGate()
     private let captureSession = ScreenCaptureSession()
@@ -903,6 +1218,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
         openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
         transcriptionSettingsStore: any TranscriptionSettingsStoring = UserDefaultsTranscriptionSettingsStore(),
+        transcriptionModelLibrary: TranscriptionModelLibrary? = nil,
         translator: (any TranscriptTranslating)? = nil
     ) {
         let assets = WhisperBridgeAssets(bundle: bundle)
@@ -917,6 +1233,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         self.meetingWorker = meetingWorker
         self.meWorker = meWorker
         self.transcriptionSettingsStore = transcriptionSettingsStore
+        self.transcriptionModelLibrary = transcriptionModelLibrary ?? TranscriptionModelLibrary(bundle: bundle)
         self.transcriptCoordinator = TranscriptCoordinator(
             meetingWorker: meetingWorker,
             meWorker: meWorker,
@@ -957,6 +1274,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         logger.notice("ScreenCaptureSession started; sessionID=\(PublicLogRedaction.sessionIdentifier(for: capture.artifactDirectoryURL), privacy: .public)")
 
         let transcriptChunks = await transcriptCoordinator.currentTranscriptChunks()
+        let liveTranscriptRows = await transcriptCoordinator.currentLiveTranscriptRows()
         do {
             let activeSession = try await sessionRepository.beginSessionBundle(
                 at: capture.artifactDirectoryURL,
@@ -999,7 +1317,8 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             latestEvent: capture.latestEvent,
             sourceStatuses: capture.sourceStatuses,
             repairActions: [],
-            transcriptChunks: transcriptChunks
+            transcriptChunks: transcriptChunks,
+            liveTranscriptRows: liveTranscriptRows
         )
         liveSnapshot = snapshot
         logger.notice("startShellSession returning recording snapshot")
@@ -1091,6 +1410,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         }
 
         let transcriptChunks = await transcriptCoordinator.currentTranscriptChunks()
+        let liveTranscriptRows = await transcriptCoordinator.currentLiveTranscriptRows()
         let transcriptHealth = await transcriptCoordinator.currentHealthSnapshot()
         let sourceStatuses = mergedSourceStatuses(
             captureStatuses: capture.sourceStatuses,
@@ -1122,7 +1442,8 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
                 ?? capture.latestEvent,
             sourceStatuses: sourceStatuses,
             repairActions: [],
-            transcriptChunks: transcriptChunks
+            transcriptChunks: transcriptChunks,
+            liveTranscriptRows: liveTranscriptRows
         )
         liveSnapshot = snapshot
         return snapshot
@@ -1136,21 +1457,35 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
     }
 
     func runSmokeTranscription() async throws -> SmokeTranscriptionSnapshot {
-        await applyCurrentTranscriptionLanguage()
+        let modelName = try await applyCurrentTranscriptionSettings()
         let result = try await meetingWorker.transcribeBundledSmokeSample()
 
         return SmokeTranscriptionSnapshot(
             phase: .succeeded,
-            headline: "Bundled model loaded inside the app",
-            detail: "The \(result.source.rawValue) worker loaded \(result.modelName), read \(result.sampleName), and returned local text on \(result.threadCount) threads from \(result.sampleCount) PCM frames.",
+            headline: "Selected model loaded inside the app",
+            detail: "The \(result.source.rawValue) worker loaded \(modelName), read \(result.sampleName), and returned local text on \(result.threadCount) threads from \(result.sampleCount) PCM frames.",
             transcript: result.text
         )
     }
 
     private func applyCurrentTranscriptionLanguage() async {
+        do {
+            _ = try await applyCurrentTranscriptionSettings()
+        } catch {
+            logger.error("transcription model resolution failed: \(error.localizedDescription, privacy: .public)")
+            let language = transcriptionSettingsStore.transcriptionLanguage
+            await meetingWorker.setLanguage(language)
+            await meWorker.setLanguage(language)
+        }
+    }
+
+    private func applyCurrentTranscriptionSettings() async throws -> String {
         let language = transcriptionSettingsStore.transcriptionLanguage
+        let modelURL = try transcriptionModelLibrary.resolveModelURL(for: transcriptionSettingsStore.transcriptionModelID)
         await meetingWorker.setLanguage(language)
         await meWorker.setLanguage(language)
+        await meetingWorker.setModelURL(modelURL)
+        await meWorker.setModelURL(modelURL)
         let provider = transcriptionSettingsStore.transcriptTranslationProvider
         await transcriptCoordinator.setTranslationConfiguration(
             sourceLanguage: language,
@@ -1159,9 +1494,13 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
                 provider: provider,
                 model: transcriptionSettingsStore.translationModel(for: provider),
                 baseURL: transcriptionSettingsStore.translationBaseURL(for: provider)
+            ),
+            context: TranscriptTranslationContext(
+                domain: transcriptionSettingsStore.transcriptTranslationDomain
             )
         )
-        logger.notice("transcription language set for next whisper work: \(language.whisperCode, privacy: .public)")
+        logger.notice("transcription settings set for next whisper work: language=\(language.whisperCode, privacy: .public) model=\(modelURL.lastPathComponent, privacy: .public)")
+        return modelURL.lastPathComponent
     }
 
     private static func blockedSourceStatuses(for repairActions: [PermissionRepairAction]) -> [SourcePipelineStatus] {
@@ -1254,11 +1593,12 @@ final class RecordingViewModel: ObservableObject {
     ]
     @Published private(set) var repairActions: [PermissionRepairAction] = []
     @Published private(set) var transcriptChunks: [CommittedTranscriptChunk] = []
+    @Published private(set) var liveTranscriptRows: [TranscriptDisplayRow] = []
     @Published private(set) var recordingStartedAt: Date?
     @Published private(set) var isBusy = false
     @Published private(set) var smokePhase: SmokeTranscriptionPhase = .ready
-    @Published private(set) var smokeHeadline = "Bundled local transcription is ready to verify"
-    @Published private(set) var smokeDetail = "Run the smoke action to load the pinned model from app resources and transcribe the bundled sample inside the app process."
+    @Published private(set) var smokeHeadline = "Local transcription is ready to verify"
+    @Published private(set) var smokeDetail = "Run the smoke action to load the selected local model and transcribe the bundled sample inside the app process."
     @Published private(set) var smokeTranscript = "No smoke transcription has run yet."
     @Published private(set) var isSmokeBusy = false
 
@@ -1373,6 +1713,7 @@ final class RecordingViewModel: ObservableObject {
         sourceStatuses = snapshot.sourceStatuses
         repairActions = snapshot.repairActions
         transcriptChunks = snapshot.transcriptChunks
+        liveTranscriptRows = snapshot.liveTranscriptRows
 
         switch snapshot.phase {
         case .recording:
@@ -1390,8 +1731,8 @@ final class RecordingViewModel: ObservableObject {
         guard !isSmokeBusy else { return }
         isSmokeBusy = true
         smokePhase = .running
-        smokeHeadline = "Loading bundled whisper model"
-        smokeDetail = "The smoke path is reading the pinned bundled model and sample from the app resources now."
+        smokeHeadline = "Loading selected whisper model"
+        smokeDetail = "The smoke path is reading the selected local model and bundled sample now."
         smokeTranscript = "Working..."
         defer { isSmokeBusy = false }
 
@@ -1426,6 +1767,7 @@ final class RecordingViewModel: ObservableObject {
                     self.sourceStatuses = snapshot.sourceStatuses
                     self.repairActions = snapshot.repairActions
                     self.transcriptChunks = snapshot.transcriptChunks
+                    self.liveTranscriptRows = snapshot.liveTranscriptRows
                 }
 
                 try? await Task.sleep(for: .seconds(1))

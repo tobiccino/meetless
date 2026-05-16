@@ -1,11 +1,15 @@
 import SwiftUI
 
 struct TranscriptRowsView: View {
-    let chunks: [CommittedTranscriptChunk]
+    let rows: [TranscriptDisplayRow]
     let maxHeight: CGFloat
 
     init(chunks: [CommittedTranscriptChunk], maxHeight: CGFloat = 260) {
-        self.chunks = chunks.sorted { first, second in
+        self.init(rows: chunks.map(TranscriptDisplayRow.init(chunk:)), maxHeight: maxHeight)
+    }
+
+    init(rows: [TranscriptDisplayRow], maxHeight: CGFloat = 260) {
+        self.rows = rows.sorted { first, second in
             if first.startTime == second.startTime {
                 return first.sequenceNumber < second.sequenceNumber
             }
@@ -17,15 +21,15 @@ struct TranscriptRowsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if chunks.isEmpty {
+            if rows.isEmpty {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(chunks.enumerated()), id: \.element.id) { index, chunk in
-                            TranscriptRow(chunk: chunk)
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                            TranscriptRow(row: row)
 
-                            if index < chunks.count - 1 {
+                            if index < rows.count - 1 {
                                 HairlineDivider()
                             }
                         }
@@ -57,7 +61,7 @@ struct TranscriptRowsView: View {
 }
 
 private struct TranscriptRow: View {
-    let chunk: CommittedTranscriptChunk
+    let row: TranscriptDisplayRow
 
     var body: some View {
         Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 0) {
@@ -69,26 +73,56 @@ private struct TranscriptRow: View {
                     .frame(width: 44, alignment: .leading)
                     .padding(.top, 1)
 
-                Text(chunk.text)
-                    .font(MeetlessDesignTokens.Typography.body)
-                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.text)
+                        .font(MeetlessDesignTokens.Typography.body)
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(textColor)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let statusText {
+                        Text(statusText)
+                            .font(MeetlessDesignTokens.Typography.caption)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(formattedStartTime), \(chunk.text)")
+        .accessibilityLabel("\(formattedStartTime), \(row.text)")
     }
 
     private var formattedStartTime: String {
-        let totalSeconds = max(0, Int(chunk.startTime.rounded(.down)))
+        let totalSeconds = max(0, Int(row.startTime.rounded(.down)))
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return String(format: "%01d:%02d", minutes, seconds)
+    }
+
+    private var statusText: String? {
+        switch row.state {
+        case .committed:
+            return nil
+        case .pendingTranscript:
+            return "Waiting for a complete phrase before translation"
+        case .pendingTranslation:
+            return "Translating"
+        }
+    }
+
+    private var textColor: Color {
+        switch row.state {
+        case .committed:
+            return MeetlessDesignTokens.Colors.primaryText
+        case .pendingTranscript, .pendingTranslation:
+            return MeetlessDesignTokens.Colors.secondaryText
+        }
     }
 }
 

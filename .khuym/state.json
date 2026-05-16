@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "feature_slug": "transcript-translation-display",
+  "feature_slug": "gemini-translation-model-presets",
   "mode": "standard",
   "active_skill": "khuym:reviewing",
   "phase": "review-complete",
@@ -16,13 +16,13 @@
   "active_workers": [],
   "blockers": [],
   "focus": "idle",
-  "summary": "Transcript output language and Gemini/OpenAI-compatible translation providers implemented. OpenAI provider now uses Chat Completions request/response shape, accepts a full /v1/chat/completions endpoint such as http://13.21.34.219:11434/v1/chat/completions, and Info.plist allows HTTP transport for user-configured compatible endpoints.",
-  "next_action": "Manual UAT: relaunch the rebuilt app, configure OpenAI provider with model gemma4:31b, base URL http://13.21.34.219:11434/v1/chat/completions, an operator-provided API key, then verify live transcript translation.",
+  "summary": "Transcript translation settings now expose a Gemini model preset picker with stable, preview, latest-alias, and compatibility options while preserving the custom model text field.",
+  "next_action": "Manual UAT: relaunch the rebuilt app, open Settings, choose Gemini as the translation provider, verify the Model preset menu offers the expanded Gemini list, and confirm selecting a preset updates the editable Model field.",
   "review_uat": {
     "automated": {
-      "focused_tests": "passed: TranscriptTranslationServiceTests, 4 tests, 0 failures",
-      "full_suite": "passed: 72 tests, 0 failures",
-      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-; xcodebuild build -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-"
+      "focused_tests": "passed: Gemini model preset tests, 2 tests, 0 failures",
+      "full_suite": "passed: 81 tests, 0 failures",
+      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-"
     },
     "manual": "pending"
   },
@@ -34,5 +34,5 @@
     "learnings_file": "",
     "critical_promotions": 0
   },
-  "last_updated": "2026-05-15T21:09:00+07:00"
+  "last_updated": "2026-05-16T16:18:09+07:00"
 }

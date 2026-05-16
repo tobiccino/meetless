@@ -9,8 +9,10 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
 
         XCTAssertEqual(store.transcriptionLanguage, .english)
         XCTAssertEqual(store.transcriptionLanguage.whisperCode, "en")
+        XCTAssertEqual(store.transcriptionModelID, "base")
         XCTAssertEqual(store.transcriptOutputLanguage, .english)
         XCTAssertEqual(store.transcriptTranslationProvider, .gemini)
+        XCTAssertEqual(store.transcriptTranslationDomain, .general)
         XCTAssertEqual(store.translationModel(for: .gemini), "gemini-2.5-flash")
         XCTAssertEqual(store.translationModel(for: .openAI), "gpt-5.4-mini")
     }
@@ -20,25 +22,31 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
 
         store.transcriptionLanguage = .korean
+        store.transcriptionModelID = "small"
 
         let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
         XCTAssertEqual(reopenedStore.transcriptionLanguage, .korean)
         XCTAssertEqual(reopenedStore.transcriptionLanguage.whisperCode, "ko")
+        XCTAssertEqual(reopenedStore.transcriptionModelID, "small")
     }
 
     func testTranscriptionSettingsFallsBackToEnglishForInvalidStoredValue() throws {
         let userDefaults = try makeIsolatedUserDefaults()
         userDefaults.set("fr", forKey: "meetless.transcriptionLanguage")
+        userDefaults.set("unknown-model", forKey: "meetless.transcriptionModelID")
         userDefaults.set("fr", forKey: "meetless.transcriptOutputLanguage")
         userDefaults.set("anthropic", forKey: "meetless.transcriptTranslationProvider")
+        userDefaults.set("unknown-domain", forKey: "meetless.transcriptTranslation.domain")
         userDefaults.set("", forKey: "meetless.transcriptTranslation.gemini.model")
         userDefaults.set("not a url", forKey: "meetless.transcriptTranslation.openai.baseURL")
         let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
 
         XCTAssertEqual(store.transcriptionLanguage, .english)
         XCTAssertEqual(store.transcriptionLanguage.whisperCode, "en")
+        XCTAssertEqual(store.transcriptionModelID, "base")
         XCTAssertEqual(store.transcriptOutputLanguage, .english)
         XCTAssertEqual(store.transcriptTranslationProvider, .gemini)
+        XCTAssertEqual(store.transcriptTranslationDomain, .general)
         XCTAssertEqual(store.translationModel(for: .gemini), "gemini-2.5-flash")
         XCTAssertEqual(store.translationBaseURL(for: .openAI).absoluteString, "https://api.openai.com")
     }
@@ -59,11 +67,146 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(reopenedStore.translationBaseURL(for: .openAI).absoluteString, "https://openai.test")
     }
 
+    func testGeminiTranslationProviderExposesMoreModelPresets() {
+        let presets = TranscriptTranslationProvider.gemini.modelPresets
+        let presetIDs = presets.map(\.id)
+
+        XCTAssertEqual(
+            presetIDs,
+            [
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-pro",
+                "gemini-3-flash-preview",
+                "gemini-3-pro-preview",
+                "gemini-flash-latest",
+                "gemini-pro-latest",
+                "gemini-2.0-flash-lite"
+            ]
+        )
+        XCTAssertTrue(presets.allSatisfy { !$0.displayName.isEmpty })
+        XCTAssertTrue(presets.allSatisfy { !$0.detail.isEmpty })
+        XCTAssertTrue(TranscriptTranslationProvider.openAI.modelPresets.isEmpty)
+    }
+
+    @MainActor
+    func testSettingsViewModelSelectsGeminiTranslationModelPresetAndPreservesCustomModel() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let settingsStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            transcriptionSettingsStore: settingsStore
+        )
+
+        XCTAssertEqual(viewModel.selectedTranslationModelPresetID, "gemini-2.5-flash")
+
+        viewModel.selectTranslationModelPreset("gemini-3-flash-preview")
+        XCTAssertEqual(viewModel.translationModel, "gemini-3-flash-preview")
+        XCTAssertEqual(settingsStore.translationModel(for: .gemini), "gemini-3-flash-preview")
+        XCTAssertEqual(viewModel.selectedTranslationModelPresetID, "gemini-3-flash-preview")
+
+        viewModel.translationModel = "gemini-custom-preview"
+        XCTAssertEqual(viewModel.selectedTranslationModelPresetID, GeminiSettingsViewModel.customTranslationModelPresetID)
+        viewModel.selectTranslationModelPreset(GeminiSettingsViewModel.customTranslationModelPresetID)
+        XCTAssertEqual(viewModel.translationModel, "gemini-custom-preview")
+    }
+
+    func testTranscriptionSettingsPersistsTranslationContextDomain() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+
+        store.transcriptTranslationDomain = .informationTechnology
+
+        let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        XCTAssertEqual(reopenedStore.transcriptTranslationDomain, .informationTechnology)
+    }
+
     func testWhisperBridgeDefaultsToMultilingualBaseModel() {
         let assets = WhisperBridgeAssets(bundle: Bundle(for: Self.self))
 
         XCTAssertEqual(assets.modelBasename, "ggml-base")
         XCTAssertEqual(assets.bundledModelFilename, "ggml-base.bin")
+    }
+
+    func testTranscriptionModelCatalogUsesBalancedOfficialPresets() {
+        let modelIDs = TranscriptionModelPreset.allPresets.map(\.id)
+
+        XCTAssertEqual(
+            modelIDs,
+            [
+                "tiny",
+                "tiny.en",
+                "base",
+                "base.en",
+                "small",
+                "small.en",
+                "medium",
+                "medium.en",
+                "large-v3-turbo",
+                "large-v3-turbo-q5_0"
+            ]
+        )
+        XCTAssertTrue(TranscriptionModelPreset(storedValue: "base").isBundled)
+        XCTAssertEqual(TranscriptionModelPreset(storedValue: "base").diskSizeLabel, "142 MiB")
+        XCTAssertEqual(TranscriptionModelPreset(storedValue: "base").resourceLabel, "Low")
+        XCTAssertEqual(TranscriptionModelPreset(storedValue: "base").languageLabel, "Multilingual")
+        XCTAssertTrue(TranscriptionModelPreset(storedValue: "base").recommendation.contains("Default"))
+        XCTAssertEqual(TranscriptionModelPreset(storedValue: "base.en").languageLabel, "English only")
+        XCTAssertEqual(TranscriptionModelPreset(storedValue: "large-v3-turbo-q5_0").diskSizeLabel, "547 MiB")
+        XCTAssertTrue(TranscriptionModelPreset(storedValue: "large-v3-turbo-q5_0").languageLabel.contains("quantized"))
+        XCTAssertEqual(
+            TranscriptionModelPreset(storedValue: "small").downloadURL?.absoluteString,
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+        )
+    }
+
+    func testTranscriptionModelLibraryDownloadsModelIntoApplicationSupportModelDirectory() async throws {
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "TranscriptionModelLibraryTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        let downloader = FakeTranscriptionModelDownloader(result: .success(Data("model-bytes".utf8)))
+        let library = TranscriptionModelLibrary(
+            bundle: Bundle(for: Self.self),
+            modelsDirectoryURL: scratchDirectory,
+            downloader: downloader
+        )
+        let preset = TranscriptionModelPreset(storedValue: "small")
+        var progressValues: [Double] = []
+
+        try await library.download(preset) { progress in
+            progressValues.append(progress)
+        }
+
+        let modelURL = scratchDirectory.appendingPathComponent("ggml-small.bin", isDirectory: false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: modelURL.path))
+        XCTAssertEqual(try Data(contentsOf: modelURL), Data("model-bytes".utf8))
+        XCTAssertEqual(progressValues, [0.5, 1])
+        XCTAssertTrue(library.isInstalled(preset))
+    }
+
+    func testTranscriptionModelLibraryCleansFailedDownloadAndReportsMissingStatus() async throws {
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "TranscriptionModelLibraryTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        let downloader = FakeTranscriptionModelDownloader(result: .failure(CocoaError(.fileReadNoSuchFile)))
+        let library = TranscriptionModelLibrary(
+            bundle: Bundle(for: Self.self),
+            modelsDirectoryURL: scratchDirectory,
+            downloader: downloader
+        )
+        let preset = TranscriptionModelPreset(storedValue: "small")
+
+        do {
+            try await library.download(preset) { _ in }
+            XCTFail("Expected download to fail.")
+        } catch {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: library.localModelURL(for: preset).path))
+        }
+
+        let status = try XCTUnwrap(
+            library.statuses(selectedModelID: "base", downloadingProgress: [:], failures: [:])
+                .first { $0.id == "small" }
+        )
+        XCTAssertEqual(status.availability, .missing)
+        XCTAssertFalse(status.canSelect)
     }
 
     func testTranscriptionLanguageMapsKoreanToWhisperCode() {
@@ -347,5 +490,34 @@ private final class FakeKeychainItemAccessor: KeychainItemAccessing {
         }
 
         recordedValues.append(value)
+    }
+}
+
+private final class FakeTranscriptionModelDownloader: TranscriptionModelDownloading {
+    private let result: Result<Data, Error>
+
+    init(result: Result<Data, Error>) {
+        self.result = result
+    }
+
+    func download(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        progressHandler: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        progressHandler(0.5)
+
+        switch result {
+        case .success(let data):
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: destinationURL, options: .atomic)
+            progressHandler(1)
+        case .failure(let error):
+            try? FileManager.default.removeItem(at: destinationURL)
+            throw error
+        }
     }
 }
