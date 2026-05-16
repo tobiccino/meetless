@@ -236,6 +236,13 @@ Create a DMG:
 ./scripts/package-dmg.sh
 ```
 
+Create a named internal DMG in `.dist/`:
+
+```zsh
+DMG_NAME="Meetless-internal-$(date +%Y%m%d-%H%M).dmg" \
+./scripts/package-dmg.sh
+```
+
 The packaging script runs tests by default with signing disabled, builds the
 Release app, verifies the bundled model and embedded whisper framework, checks
 the app signature, creates a compressed DMG in `.dist/`, and verifies the DMG.
