@@ -1217,6 +1217,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         bundle: Bundle = .main,
         geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
         openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
+        googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring = KeychainGoogleTranslateAPIKeyStore(),
         transcriptionSettingsStore: any TranscriptionSettingsStoring = UserDefaultsTranscriptionSettingsStore(),
         transcriptionModelLibrary: TranscriptionModelLibrary? = nil,
         translator: (any TranscriptTranslating)? = nil
@@ -1227,7 +1228,8 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         let translator = translator
             ?? TranscriptTranslationService(
                 geminiAPIKeyStore: geminiAPIKeyStore,
-                openAIAPIKeyStore: openAIAPIKeyStore
+                openAIAPIKeyStore: openAIAPIKeyStore,
+                googleTranslateAPIKeyStore: googleTranslateAPIKeyStore
             )
 
         self.meetingWorker = meetingWorker

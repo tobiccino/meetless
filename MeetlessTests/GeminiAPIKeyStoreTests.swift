@@ -15,6 +15,8 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(store.transcriptTranslationDomain, .general)
         XCTAssertEqual(store.translationModel(for: .gemini), "gemini-2.5-flash")
         XCTAssertEqual(store.translationModel(for: .openAI), "gpt-5.4-mini")
+        XCTAssertEqual(store.translationModel(for: .googleTranslate), "nmt")
+        XCTAssertEqual(store.translationBaseURL(for: .googleTranslate).absoluteString, "https://translation.googleapis.com")
     }
 
     func testTranscriptionSettingsPersistsKoreanLanguage() throws {
@@ -39,6 +41,7 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         userDefaults.set("unknown-domain", forKey: "meetless.transcriptTranslation.domain")
         userDefaults.set("", forKey: "meetless.transcriptTranslation.gemini.model")
         userDefaults.set("not a url", forKey: "meetless.transcriptTranslation.openai.baseURL")
+        userDefaults.set("not a url", forKey: "meetless.transcriptTranslation.google_translate.baseURL")
         let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
 
         XCTAssertEqual(store.transcriptionLanguage, .english)
@@ -49,6 +52,7 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(store.transcriptTranslationDomain, .general)
         XCTAssertEqual(store.translationModel(for: .gemini), "gemini-2.5-flash")
         XCTAssertEqual(store.translationBaseURL(for: .openAI).absoluteString, "https://api.openai.com")
+        XCTAssertEqual(store.translationBaseURL(for: .googleTranslate).absoluteString, "https://translation.googleapis.com")
     }
 
     func testTranscriptionSettingsPersistsVietnameseOutputAndOpenAIProviderPreset() throws {
@@ -65,6 +69,21 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(reopenedStore.transcriptTranslationProvider, .openAI)
         XCTAssertEqual(reopenedStore.translationModel(for: .openAI), "gpt-test-translation")
         XCTAssertEqual(reopenedStore.translationBaseURL(for: .openAI).absoluteString, "https://openai.test")
+    }
+
+    func testTranscriptionSettingsPersistsGoogleTranslateProvider() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+
+        store.transcriptOutputLanguage = .vietnamese
+        store.transcriptTranslationProvider = .googleTranslate
+        store.setTranslationBaseURL(URL(string: "https://translation.test")!, for: .googleTranslate)
+
+        let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        XCTAssertEqual(reopenedStore.transcriptOutputLanguage, .vietnamese)
+        XCTAssertEqual(reopenedStore.transcriptTranslationProvider, .googleTranslate)
+        XCTAssertEqual(reopenedStore.translationModel(for: .googleTranslate), "nmt")
+        XCTAssertEqual(reopenedStore.translationBaseURL(for: .googleTranslate).absoluteString, "https://translation.test")
     }
 
     func testGeminiTranslationProviderExposesMoreModelPresets() {
@@ -87,6 +106,8 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertTrue(presets.allSatisfy { !$0.displayName.isEmpty })
         XCTAssertTrue(presets.allSatisfy { !$0.detail.isEmpty })
         XCTAssertTrue(TranscriptTranslationProvider.openAI.modelPresets.isEmpty)
+        XCTAssertTrue(TranscriptTranslationProvider.googleTranslate.modelPresets.isEmpty)
+        XCTAssertFalse(TranscriptTranslationProvider.googleTranslate.usesLLMPromptContext)
     }
 
     @MainActor
@@ -242,6 +263,16 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(keychain.recordedValues, ["openai-secret"])
     }
 
+    func testGoogleTranslateKeychainStoreUsesSeparateKeychainPath() throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainGoogleTranslateAPIKeyStore(keychain: keychain)
+
+        try store.saveAPIKey("google-secret")
+
+        XCTAssertEqual(try store.loadAPIKey(), "google-secret")
+        XCTAssertEqual(keychain.recordedValues, ["google-secret"])
+    }
+
     func testSaveAPIKeyUpdatesExistingValue() throws {
         let keychain = FakeKeychainItemAccessor()
         let store = KeychainGeminiAPIKeyStore(keychain: keychain)
@@ -352,6 +383,41 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(viewModel.apiKeyInput, "")
         XCTAssertFalse(viewModel.keyStatus.detail.contains("gemini-secret"))
         XCTAssertFalse(viewModel.feedbackMessage?.contains("gemini-secret") ?? false)
+    }
+
+    @MainActor
+    func testSettingsViewModelSavesTrimmedGoogleTranslateKeyWithoutDisplayingSecret() throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainGoogleTranslateAPIKeyStore(keychain: keychain)
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            googleTranslateAPIKeyStore: store
+        )
+
+        viewModel.googleTranslateAPIKeyInput = "  google-secret  "
+        viewModel.saveGoogleTranslateAPIKey()
+
+        XCTAssertEqual(try store.loadAPIKey(), "google-secret")
+        XCTAssertEqual(keychain.recordedValues, ["google-secret"])
+        XCTAssertEqual(viewModel.googleTranslateKeyStatus, .configured)
+        XCTAssertEqual(viewModel.googleTranslateAPIKeyInput, "")
+        XCTAssertFalse(viewModel.feedbackMessage?.contains("google-secret") ?? false)
+    }
+
+    @MainActor
+    func testSettingsViewModelHidesPromptControlsForGoogleTranslateProvider() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let settingsStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        settingsStore.transcriptTranslationProvider = .googleTranslate
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            transcriptionSettingsStore: settingsStore
+        )
+
+        XCTAssertFalse(viewModel.selectedProviderUsesLLMPromptContext)
+
+        viewModel.transcriptTranslationProvider = .gemini
+        XCTAssertTrue(viewModel.selectedProviderUsesLLMPromptContext)
     }
 
     @MainActor

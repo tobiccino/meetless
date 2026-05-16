@@ -6,7 +6,8 @@
 - Added selectable local Whisper transcription model presets with download, install, remove, smoke-test, and fallback handling.
 - Added richer Whisper model details in Settings, including storage footprint, relative CPU/RAM cost, multilingual or English-only support, quantized status, and recommended use.
 - Added transcript output language settings for English, Korean, and Vietnamese.
-- Added Gemini and OpenAI-compatible transcript translation providers with Keychain-backed API key storage.
+- Added Gemini, OpenAI-compatible, and Google Translate transcript translation providers with Keychain-backed API key storage.
+- Added a custom About window with Meetless product messaging and Tobiccino branding.
 - Added Gemini translation model presets for stable, preview, latest-alias, and compatibility model IDs while keeping custom model entry available.
 - Added translation context selection with fixed read-only prompt previews for domain-aware transcript translation.
 - Added live transcript rows so partial transcript and translation progress can stream in the recording view before persisted chunks commit.

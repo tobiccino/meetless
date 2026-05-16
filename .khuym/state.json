@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "feature_slug": "gemini-translation-model-presets",
+  "feature_slug": "google-translate-provider",
   "mode": "standard",
   "active_skill": "khuym:reviewing",
   "phase": "review-complete",
@@ -16,12 +16,12 @@
   "active_workers": [],
   "blockers": [],
   "focus": "idle",
-  "summary": "Transcript translation settings now expose a Gemini model preset picker with stable, preview, latest-alias, and compatibility options while preserving the custom model text field.",
-  "next_action": "Manual UAT: relaunch the rebuilt app, open Settings, choose Gemini as the translation provider, verify the Model preset menu offers the expanded Gemini list, and confirm selecting a preset updates the editable Model field.",
+  "summary": "Transcript translation now supports Google Translate Basic v2 as a curated provider with separate Keychain-backed API key storage and Settings UI that hides LLM-only prompt/model controls when selected.",
+  "next_action": "Manual UAT: relaunch the rebuilt app, open Settings, choose Google Translate as the translation provider, save a Cloud Translation API key, and verify a recording translates when output language differs from the transcription language.",
   "review_uat": {
     "automated": {
-      "focused_tests": "passed: Gemini model preset tests, 2 tests, 0 failures",
-      "full_suite": "passed: 81 tests, 0 failures",
+      "focused_tests": "passed: Google Translate provider/settings tests, 39 tests, 0 failures",
+      "full_suite": "passed: 88 tests, 0 failures",
       "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-"
     },
     "manual": "pending"
@@ -34,5 +34,5 @@
     "learnings_file": "",
     "critical_promotions": 0
   },
-  "last_updated": "2026-05-16T16:18:09+07:00"
+  "last_updated": "2026-05-16T16:40:00+07:00"
 }

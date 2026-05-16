@@ -24,6 +24,8 @@ action-item bullets.
 - A Gemini API key for optional session-note generation and Gemini transcript
   translation.
 - An OpenAI API key when OpenAI is selected for transcript translation.
+- A Google Translate API key when Google Translate is selected for transcript
+  translation.
 
 ## Project Layout
 
@@ -39,12 +41,12 @@ action-item bullets.
 - `MeetlessApp/Services/SessionRepository` - local session bundle persistence,
   transcript snapshots, audio artifact resolution, AAC compression, and generated
   notes storage.
-- `MeetlessApp/Services/GeminiAPIKeyStore` - Keychain-backed Gemini API key
-  storage.
+- `MeetlessApp/Services/GeminiAPIKeyStore` - Keychain-backed Gemini, OpenAI,
+  and Google Translate API key storage.
 - `MeetlessApp/Services/GeminiSessionNotes` - Gemini Files API upload,
   `gemini-2.5-flash` generation, structured response parsing, and orchestration.
-- `MeetlessApp/Services/TranscriptTranslation` - Gemini/OpenAI transcript
-  translation request clients and provider configuration.
+- `MeetlessApp/Services/TranscriptTranslation` - Gemini/OpenAI/Google Translate
+  transcript translation request clients and provider configuration.
 - `MeetlessPackages/WhisperCppBridge` - Swift-facing bridge around the bundled
   `whisper.cpp` framework and model.
 - `Vendor/whisper.cpp` - pinned upstream whisper dependency.
@@ -166,8 +168,10 @@ live and before it is written to `transcript.json`.
 
 Gemini is the default translation provider and reuses the saved Gemini API key.
 OpenAI can be selected with its own Keychain-backed API key; the default OpenAI
-translation model is `gpt-5.4-mini` through the Responses API. Provider model
-and base URL presets can be overridden in Settings.
+translation model is `gpt-5.4-mini` through an OpenAI-compatible chat
+completions endpoint. Google Translate can be selected with its own
+Keychain-backed Cloud Translation Basic v2 API key. Provider model and base URL
+presets can be overridden in Settings for LLM-backed providers.
 
 If translation fails or a provider key is missing, recording continues and the
 original transcript text is displayed and saved with warning metadata.

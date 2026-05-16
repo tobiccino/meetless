@@ -32,7 +32,7 @@ enum AppScreen: String, CaseIterable, Identifiable {
         case .sessionDetail:
             return "Transcript and metadata shell"
         case .settings:
-            return "Gemini key management"
+            return "Application management"
         }
     }
 

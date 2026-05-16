@@ -540,6 +540,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
             openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -591,6 +592,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
             openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -633,6 +635,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: "test-gemini-key"),
             openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -667,6 +670,7 @@ final class GeminiSessionNotesClientTests: XCTestCase {
             sessionRepository: fixture.repository,
             geminiAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             openAIAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureGeminiAPIKeyStore(apiKey: nil),
             geminiSessionNotesOrchestrator: orchestrator
         )
 
@@ -906,7 +910,7 @@ private actor FixtureGeminiHTTPTransport: GeminiHTTPTransport {
     }
 }
 
-private final class FixtureGeminiAPIKeyStore: GeminiAPIKeyStoring, OpenAIAPIKeyStoring {
+private final class FixtureGeminiAPIKeyStore: GeminiAPIKeyStoring, OpenAIAPIKeyStoring, GoogleTranslateAPIKeyStoring {
     private let apiKey: String?
     private let loadError: Error?
 

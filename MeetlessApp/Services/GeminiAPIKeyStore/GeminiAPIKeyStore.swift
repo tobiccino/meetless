@@ -13,6 +13,12 @@ protocol OpenAIAPIKeyStoring: Sendable {
     func deleteAPIKey() throws
 }
 
+protocol GoogleTranslateAPIKeyStoring: Sendable {
+    func loadAPIKey() throws -> String?
+    func saveAPIKey(_ apiKey: String) throws
+    func deleteAPIKey() throws
+}
+
 enum GeminiAPIKeyStoreError: Error, Equatable {
     case invalidStoredData
     case keychainFailure(operation: KeychainOperation, status: OSStatus)
@@ -166,6 +172,30 @@ final class KeychainOpenAIAPIKeyStore: OpenAIAPIKeyStoring, @unchecked Sendable 
         keychain: KeychainItemAccessing = SystemKeychainItemAccessor(),
         service: String = "com.themrb.meetless.openai-api-key",
         account: String = "openai-api-key"
+    ) {
+        self.store = KeychainAPIKeyStore(keychain: keychain, service: service, account: account)
+    }
+
+    func loadAPIKey() throws -> String? {
+        try store.loadAPIKey()
+    }
+
+    func saveAPIKey(_ apiKey: String) throws {
+        try store.saveAPIKey(apiKey)
+    }
+
+    func deleteAPIKey() throws {
+        try store.deleteAPIKey()
+    }
+}
+
+final class KeychainGoogleTranslateAPIKeyStore: GoogleTranslateAPIKeyStoring, @unchecked Sendable {
+    private let store: KeychainAPIKeyStore
+
+    init(
+        keychain: KeychainItemAccessing = SystemKeychainItemAccessor(),
+        service: String = "com.themrb.meetless.google-translate-api-key",
+        account: String = "google-translate-api-key"
     ) {
         self.store = KeychainAPIKeyStore(keychain: keychain, service: service, account: account)
     }

@@ -37,6 +37,7 @@ enum TranscriptOutputLanguage: String, CaseIterable, Identifiable, Codable, Send
 enum TranscriptTranslationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     case gemini
     case openAI = "openai"
+    case googleTranslate = "google_translate"
 
     var id: String { rawValue }
 
@@ -46,6 +47,8 @@ enum TranscriptTranslationProvider: String, CaseIterable, Identifiable, Codable,
             return "Gemini"
         case .openAI:
             return "OpenAI"
+        case .googleTranslate:
+            return "Google Translate"
         }
     }
 
@@ -55,6 +58,8 @@ enum TranscriptTranslationProvider: String, CaseIterable, Identifiable, Codable,
             return "gemini-2.5-flash"
         case .openAI:
             return "gpt-5.4-mini"
+        case .googleTranslate:
+            return "nmt"
         }
     }
 
@@ -64,6 +69,8 @@ enum TranscriptTranslationProvider: String, CaseIterable, Identifiable, Codable,
             return URL(string: "https://generativelanguage.googleapis.com")!
         case .openAI:
             return URL(string: "https://api.openai.com")!
+        case .googleTranslate:
+            return URL(string: "https://translation.googleapis.com")!
         }
     }
 
@@ -120,6 +127,17 @@ enum TranscriptTranslationProvider: String, CaseIterable, Identifiable, Codable,
             ]
         case .openAI:
             return []
+        case .googleTranslate:
+            return []
+        }
+    }
+
+    var usesLLMPromptContext: Bool {
+        switch self {
+        case .gemini, .openAI:
+            return true
+        case .googleTranslate:
+            return false
         }
     }
 }
@@ -282,6 +300,7 @@ enum TranscriptTranslationError: Error, Equatable, Sendable {
 struct TranscriptTranslationService: TranscriptTranslating {
     private let geminiAPIKeyStore: any GeminiAPIKeyStoring
     private let openAIAPIKeyStore: any OpenAIAPIKeyStoring
+    private let googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring
     private let transport: any TranscriptTranslationHTTPTransport
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -302,10 +321,12 @@ struct TranscriptTranslationService: TranscriptTranslating {
     init(
         geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
         openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
+        googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring = KeychainGoogleTranslateAPIKeyStore(),
         transport: any TranscriptTranslationHTTPTransport = URLSessionTranscriptTranslationHTTPTransport()
     ) {
         self.geminiAPIKeyStore = geminiAPIKeyStore
         self.openAIAPIKeyStore = openAIAPIKeyStore
+        self.googleTranslateAPIKeyStore = googleTranslateAPIKeyStore
         self.transport = transport
     }
 
@@ -320,6 +341,8 @@ struct TranscriptTranslationService: TranscriptTranslating {
             return try await translateWithGemini(request, text: trimmedText)
         case .openAI:
             return try await translateWithOpenAI(request, text: trimmedText)
+        case .googleTranslate:
+            return try await translateWithGoogleTranslate(request, text: trimmedText)
         }
     }
 
@@ -401,6 +424,33 @@ struct TranscriptTranslationService: TranscriptTranslating {
         )
         try validate(response: response, provider: .openAI)
         return try parseOpenAIText(response.body)
+    }
+
+    private func translateWithGoogleTranslate(
+        _ request: TranscriptTranslationRequest,
+        text: String
+    ) async throws -> String {
+        let apiKey = try loadAPIKey(
+            provider: .googleTranslate,
+            loader: googleTranslateAPIKeyStore.loadAPIKey
+        )
+        let url = try googleTranslateURL(
+            from: request.providerConfig.baseURL,
+            text: text,
+            sourceLanguage: request.sourceLanguage.whisperCode,
+            targetLanguage: request.targetLanguage.rawValue,
+            apiKey: apiKey
+        )
+        let response = try await transport.send(
+            TranscriptTranslationHTTPRequest(
+                method: "POST",
+                url: url,
+                headers: [:],
+                body: Data()
+            )
+        )
+        try validate(response: response, provider: .googleTranslate)
+        return try parseGoogleTranslateText(response.body)
     }
 
     private static func openAIChatCompletionsURL(from baseURL: URL) -> URL {
@@ -491,6 +541,25 @@ struct TranscriptTranslationService: TranscriptTranslating {
         }
     }
 
+    private func parseGoogleTranslateText(_ data: Data) throws -> String {
+        do {
+            let envelope = try decoder.decode(GoogleTranslateEnvelope.self, from: data)
+            let text = envelope.data.translations
+                .map(\.translatedText)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty }
+            guard let text else {
+                throw TranscriptTranslationError.malformedResponse(provider: .googleTranslate)
+            }
+
+            return text
+        } catch let error as TranscriptTranslationError {
+            throw error
+        } catch {
+            throw TranscriptTranslationError.malformedResponse(provider: .googleTranslate)
+        }
+    }
+
     private func apiKeyURL(_ url: URL, apiKey: String) throws -> URL {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             throw TranscriptTranslationError.invalidRequest
@@ -505,6 +574,47 @@ struct TranscriptTranslationService: TranscriptTranslating {
         }
 
         return keyedURL
+    }
+
+    private func googleTranslateURL(
+        from baseURL: URL,
+        text: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        apiKey: String
+    ) throws -> URL {
+        let baseTranslateURL = Self.googleTranslateEndpointURL(from: baseURL)
+        guard var components = URLComponents(url: baseTranslateURL, resolvingAgainstBaseURL: false) else {
+            throw TranscriptTranslationError.invalidRequest
+        }
+
+        var queryItems = components.queryItems ?? []
+        queryItems.append(contentsOf: [
+            URLQueryItem(name: "q", value: text),
+            URLQueryItem(name: "source", value: sourceLanguage),
+            URLQueryItem(name: "target", value: targetLanguage),
+            URLQueryItem(name: "format", value: "text"),
+            URLQueryItem(name: "key", value: apiKey)
+        ])
+        components.queryItems = queryItems
+
+        guard let url = components.url else {
+            throw TranscriptTranslationError.invalidRequest
+        }
+
+        return url
+    }
+
+    private static func googleTranslateEndpointURL(from baseURL: URL) -> URL {
+        let path = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.hasSuffix("language/translate/v2") {
+            return baseURL
+        }
+
+        return baseURL
+            .appendingPathComponent("language")
+            .appendingPathComponent("translate")
+            .appendingPathComponent("v2")
     }
 
     private static func prompt(
@@ -617,4 +727,16 @@ private struct OpenAIChatCompletionsEnvelope: Decodable {
 
 private struct OpenAIChatChoice: Decodable {
     let message: OpenAIChatMessage
+}
+
+private struct GoogleTranslateEnvelope: Decodable {
+    let data: GoogleTranslateData
+}
+
+private struct GoogleTranslateData: Decodable {
+    let translations: [GoogleTranslateResult]
+}
+
+private struct GoogleTranslateResult: Decodable {
+    let translatedText: String
 }

@@ -4,13 +4,11 @@ struct MeetlessRootView: View {
     @StateObject private var appModel = AppModel()
 
     var body: some View {
-        NavigationStack {
-            MeetlessShellView(
-                selectedScreen: appModel.selectedScreen,
-                onSelectScreen: { screen in appModel.show(screen) }
-            ) {
-                currentScreen
-            }
+        MeetlessShellView(
+            selectedScreen: appModel.selectedScreen,
+            onSelectScreen: { screen in appModel.show(screen) }
+        ) {
+            currentScreen
         }
     }
 
@@ -170,6 +168,7 @@ private struct SettingsView: View {
     @ObservedObject var viewModel: GeminiSettingsViewModel
     @State private var isConfirmingDelete = false
     @State private var isConfirmingOpenAIDelete = false
+    @State private var isConfirmingGoogleTranslateDelete = false
 
     var body: some View {
         ScrollView {
@@ -226,13 +225,6 @@ private struct SettingsView: View {
                             .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
                     }
 
-                    if let feedbackMessage = viewModel.feedbackMessage {
-                        Text(feedbackMessage)
-                            .font(MeetlessDesignTokens.Typography.caption.weight(.medium))
-                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
-                    }
-
                     HStack(spacing: 10) {
                         Button {
                             viewModel.saveAPIKey()
@@ -263,6 +255,15 @@ private struct SettingsView: View {
 
                 openAICard
 
+                googleTranslateCard
+
+                if let feedbackMessage = viewModel.feedbackMessage {
+                    Text(feedbackMessage)
+                        .font(MeetlessDesignTokens.Typography.caption.weight(.medium))
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                }
+
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: MeetlessDesignTokens.Layout.contentMaxWidth, alignment: .leading)
@@ -283,6 +284,14 @@ private struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("OpenAI transcript translation will stay unavailable until a new key is saved.")
+        }
+        .alert("Delete Google Translate API key?", isPresented: $isConfirmingGoogleTranslateDelete) {
+            Button("Delete", role: .destructive) {
+                viewModel.deleteGoogleTranslateAPIKey()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Google Translate transcript translation will stay unavailable until a new key is saved.")
         }
     }
 
@@ -479,92 +488,94 @@ private struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 320)
+            .frame(maxWidth: 520)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Translation context")
-                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
-                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
-
-                Picker("Translation context", selection: $viewModel.transcriptTranslationDomain) {
-                    ForEach(TranscriptTranslationDomain.allCases) { domain in
-                        Text(domain.displayName).tag(domain)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(maxWidth: 320, alignment: .leading)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Prompt preview")
-                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
-                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
-
-                ScrollView {
-                    Text(viewModel.translationPromptPreview)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                }
-                .frame(minHeight: 118, maxHeight: 158)
-                .background(MeetlessDesignTokens.Colors.appBackground)
-                .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
-                        .stroke(MeetlessDesignTokens.Colors.separator)
-                )
-            }
-
-            HStack(alignment: .top, spacing: 12) {
+            if viewModel.selectedProviderUsesLLMPromptContext {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Model")
+                    Text("Translation context")
                         .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
                         .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                         .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
-                    if !viewModel.translationModelPresets.isEmpty {
-                        Picker(
-                            "Model preset",
-                            selection: Binding(
-                                get: { viewModel.selectedTranslationModelPresetID },
-                                set: { viewModel.selectTranslationModelPreset($0) }
-                            )
-                        ) {
-                            ForEach(viewModel.translationModelPresets) { preset in
-                                Text(preset.displayName).tag(preset.id)
-                            }
-                            Text("Custom").tag(GeminiSettingsViewModel.customTranslationModelPresetID)
-                        }
-                        .pickerStyle(.menu)
 
-                        if let selectedPreset = viewModel.translationModelPresets.first(where: { $0.id == viewModel.selectedTranslationModelPresetID }) {
-                            Text(selectedPreset.detail)
-                                .font(MeetlessDesignTokens.Typography.caption)
-                                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                                .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
+                    Picker("Translation context", selection: $viewModel.transcriptTranslationDomain) {
+                        ForEach(TranscriptTranslationDomain.allCases) { domain in
+                            Text(domain.displayName).tag(domain)
                         }
                     }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 320, alignment: .leading)
+                }
 
-                    TextField(viewModel.transcriptTranslationProvider.defaultModel, text: $viewModel.translationModel)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Prompt preview")
+                        .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+
+                    ScrollView {
+                        Text(viewModel.translationPromptPreview)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .frame(minHeight: 118, maxHeight: 158)
+                    .background(MeetlessDesignTokens.Colors.appBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                            .stroke(MeetlessDesignTokens.Colors.separator)
+                    )
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Model")
+                            .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                        if !viewModel.translationModelPresets.isEmpty {
+                            Picker(
+                                "Model preset",
+                                selection: Binding(
+                                    get: { viewModel.selectedTranslationModelPresetID },
+                                    set: { viewModel.selectTranslationModelPreset($0) }
+                                )
+                            ) {
+                                ForEach(viewModel.translationModelPresets) { preset in
+                                    Text(preset.displayName).tag(preset.id)
+                                }
+                                Text("Custom").tag(GeminiSettingsViewModel.customTranslationModelPresetID)
+                            }
+                            .pickerStyle(.menu)
+
+                            if let selectedPreset = viewModel.translationModelPresets.first(where: { $0.id == viewModel.selectedTranslationModelPresetID }) {
+                                Text(selectedPreset.detail)
+                                    .font(MeetlessDesignTokens.Typography.caption)
+                                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        TextField(viewModel.transcriptTranslationProvider.defaultModel, text: $viewModel.translationModel)
+                            .textFieldStyle(.roundedBorder)
+                            .font(MeetlessDesignTokens.Typography.body)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Base URL")
+                            .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+                        TextField(
+                            viewModel.transcriptTranslationProvider.defaultBaseURL.absoluteString,
+                            text: $viewModel.translationBaseURL
+                        )
                         .textFieldStyle(.roundedBorder)
                         .font(MeetlessDesignTokens.Typography.body)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Base URL")
-                        .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
-                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                        .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
-                    TextField(
-                        viewModel.transcriptTranslationProvider.defaultBaseURL.absoluteString,
-                        text: $viewModel.translationBaseURL
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .font(MeetlessDesignTokens.Typography.body)
+                    }
                 }
             }
         }
@@ -626,6 +637,68 @@ private struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(!viewModel.isOpenAIConfigured)
+
+                Spacer()
+            }
+        }
+        .padding(18)
+        .background(MeetlessDesignTokens.Colors.windowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                .stroke(MeetlessDesignTokens.Colors.separator)
+        )
+    }
+
+    private var googleTranslateCard: some View {
+        VStack(alignment: .leading, spacing: MeetlessDesignTokens.Layout.defaultGap) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Google Translate")
+                    .font(MeetlessDesignTokens.Typography.windowTitle)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                Text("Save the API key used when Google Translate is selected for transcript translation.")
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+            }
+
+            GeminiKeyStatusRow(
+                status: viewModel.googleTranslateKeyStatus,
+                providerName: "Google Translate",
+                missingMessage: "Add a Google Translate API key before translating with Google Translate."
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("API key")
+                    .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+
+                SecureField(
+                    viewModel.isGoogleTranslateConfigured ? "Enter a new key to update" : "Enter Google Translate API key",
+                    text: $viewModel.googleTranslateAPIKeyInput
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(MeetlessDesignTokens.Typography.body)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    viewModel.saveGoogleTranslateAPIKey()
+                } label: {
+                    Label(viewModel.isGoogleTranslateConfigured ? "Update Key" : "Save Key", systemImage: "key.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!viewModel.canSaveGoogleTranslateAPIKey)
+
+                Button(role: .destructive) {
+                    isConfirmingGoogleTranslateDelete = true
+                } label: {
+                    Label("Delete Key", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!viewModel.isGoogleTranslateConfigured)
 
                 Spacer()
             }

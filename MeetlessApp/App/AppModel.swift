@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
         recordingCoordinator: (any RecordingCoordinating)? = nil,
         geminiAPIKeyStore: any GeminiAPIKeyStoring = KeychainGeminiAPIKeyStore(),
         openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
+        googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring = KeychainGoogleTranslateAPIKeyStore(),
         transcriptionSettingsStore: any TranscriptionSettingsStoring = UserDefaultsTranscriptionSettingsStore(),
         geminiSessionNotesOrchestrator: (any GeminiSessionNotesOrchestrating)? = nil
     ) {
@@ -33,6 +34,7 @@ final class AppModel: ObservableObject {
         self.geminiSettingsViewModel = GeminiSettingsViewModel(
             apiKeyStore: geminiAPIKeyStore,
             openAIAPIKeyStore: openAIAPIKeyStore,
+            googleTranslateAPIKeyStore: googleTranslateAPIKeyStore,
             transcriptionSettingsStore: transcriptionSettingsStore,
             transcriptionModelLibrary: TranscriptionModelLibrary(bundle: .main)
         )
@@ -41,6 +43,7 @@ final class AppModel: ObservableObject {
                 ?? MeetlessRecordingCoordinator(
                     geminiAPIKeyStore: geminiAPIKeyStore,
                     openAIAPIKeyStore: openAIAPIKeyStore,
+                    googleTranslateAPIKeyStore: googleTranslateAPIKeyStore,
                     transcriptionSettingsStore: transcriptionSettingsStore
                 )
         )
@@ -857,6 +860,7 @@ final class GeminiSettingsViewModel: ObservableObject {
 
     @Published private(set) var keyStatus: KeyStatus = .unknown
     @Published private(set) var openAIKeyStatus: KeyStatus = .unknown
+    @Published private(set) var googleTranslateKeyStatus: KeyStatus = .unknown
     @Published private(set) var feedbackMessage: String?
     @Published private(set) var transcriptionModelStatuses: [TranscriptionModelStatus] = []
     @Published var transcriptionLanguage: TranscriptionLanguage {
@@ -911,9 +915,11 @@ final class GeminiSettingsViewModel: ObservableObject {
     }
     @Published var apiKeyInput = ""
     @Published var openAIAPIKeyInput = ""
+    @Published var googleTranslateAPIKeyInput = ""
 
     private let apiKeyStore: any GeminiAPIKeyStoring
     private let openAIAPIKeyStore: any OpenAIAPIKeyStoring
+    private let googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring
     private let transcriptionSettingsStore: any TranscriptionSettingsStoring
     private let transcriptionModelLibrary: TranscriptionModelLibrary
     private var modelDownloadProgress: [String: Double] = [:]
@@ -923,11 +929,13 @@ final class GeminiSettingsViewModel: ObservableObject {
     init(
         apiKeyStore: any GeminiAPIKeyStoring,
         openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
+        googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring = KeychainGoogleTranslateAPIKeyStore(),
         transcriptionSettingsStore: any TranscriptionSettingsStoring = UserDefaultsTranscriptionSettingsStore(),
         transcriptionModelLibrary: TranscriptionModelLibrary = TranscriptionModelLibrary()
     ) {
         self.apiKeyStore = apiKeyStore
         self.openAIAPIKeyStore = openAIAPIKeyStore
+        self.googleTranslateAPIKeyStore = googleTranslateAPIKeyStore
         self.transcriptionSettingsStore = transcriptionSettingsStore
         self.transcriptionModelLibrary = transcriptionModelLibrary
         self.transcriptionLanguage = transcriptionSettingsStore.transcriptionLanguage
@@ -950,12 +958,24 @@ final class GeminiSettingsViewModel: ObservableObject {
         !openAIAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var canSaveGoogleTranslateAPIKey: Bool {
+        !googleTranslateAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var isConfigured: Bool {
         keyStatus == .configured
     }
 
     var isOpenAIConfigured: Bool {
         openAIKeyStatus == .configured
+    }
+
+    var isGoogleTranslateConfigured: Bool {
+        googleTranslateKeyStatus == .configured
+    }
+
+    var selectedProviderUsesLLMPromptContext: Bool {
+        transcriptTranslationProvider.usesLLMPromptContext
     }
 
     var translationPromptPreview: String {
@@ -1017,6 +1037,15 @@ final class GeminiSettingsViewModel: ObservableObject {
                 : .notConfigured
         } catch {
             openAIKeyStatus = .error(Self.safeOpenAIMessage(for: error))
+        }
+
+        do {
+            let savedKey = try googleTranslateAPIKeyStore.loadAPIKey()
+            googleTranslateKeyStatus = savedKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? .configured
+                : .notConfigured
+        } catch {
+            googleTranslateKeyStatus = .error(Self.safeGoogleTranslateMessage(for: error))
         }
     }
 
@@ -1152,6 +1181,36 @@ final class GeminiSettingsViewModel: ObservableObject {
         }
     }
 
+    func saveGoogleTranslateAPIKey() {
+        let trimmedKey = googleTranslateAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            feedbackMessage = "Enter a Google Translate API key before saving."
+            return
+        }
+
+        do {
+            try googleTranslateAPIKeyStore.saveAPIKey(trimmedKey)
+            googleTranslateAPIKeyInput = ""
+            googleTranslateKeyStatus = .configured
+            feedbackMessage = "Google Translate API key saved."
+        } catch {
+            googleTranslateKeyStatus = .error(Self.safeGoogleTranslateMessage(for: error))
+            feedbackMessage = "The Google Translate API key could not be saved."
+        }
+    }
+
+    func deleteGoogleTranslateAPIKey() {
+        do {
+            try googleTranslateAPIKeyStore.deleteAPIKey()
+            googleTranslateAPIKeyInput = ""
+            googleTranslateKeyStatus = .notConfigured
+            feedbackMessage = "Google Translate API key removed."
+        } catch {
+            googleTranslateKeyStatus = .error(Self.safeGoogleTranslateMessage(for: error))
+            feedbackMessage = "The Google Translate API key could not be removed."
+        }
+    }
+
     private func refreshTranscriptionModelStatuses() {
         transcriptionModelStatuses = transcriptionModelLibrary.statuses(
             selectedModelID: transcriptionModelID,
@@ -1210,5 +1269,18 @@ final class GeminiSettingsViewModel: ObservableObject {
         }
 
         return "OpenAI key settings could not be updated. Try again."
+    }
+
+    private static func safeGoogleTranslateMessage(for error: Error) -> String {
+        if let storeError = error as? GeminiAPIKeyStoreError {
+            switch storeError {
+            case .invalidStoredData:
+                return "The saved Google Translate key could not be read. Remove it and save a new key."
+            case .keychainFailure:
+                return "Keychain could not complete the request. Check macOS access and try again."
+            }
+        }
+
+        return "Google Translate key settings could not be updated. Try again."
     }
 }

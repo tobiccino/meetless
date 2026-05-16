@@ -131,10 +131,93 @@ final class TranscriptTranslationServiceTests: XCTestCase {
         XCTAssertEqual(request.url.absoluteString, "https://openai.test/v1/chat/completions")
     }
 
+    func testGoogleTranslateUsesBasicV2QueryParametersAndParsesTranslatedText() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(
+                    statusCode: 200,
+                    body: Data(#"{"data":{"translations":[{"translatedText":"Xin chao nhom."}]}}"#.utf8)
+                )
+            ]
+        )
+        let service = TranscriptTranslationService(
+            geminiAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            openAIAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: " google-key "),
+            transport: transport
+        )
+
+        let translatedText = try await service.translate(
+            TranscriptTranslationRequest(
+                text: "Hello team.",
+                sourceLanguage: .english,
+                targetLanguage: .vietnamese,
+                providerConfig: TranscriptTranslationProviderConfiguration(
+                    provider: .googleTranslate,
+                    model: "unused",
+                    baseURL: URL(string: "https://translation.test")!
+                ),
+                context: TranscriptTranslationContext(domain: .legal)
+            )
+        )
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        let components = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false))
+        let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+
+        XCTAssertEqual(translatedText, "Xin chao nhom.")
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(components.scheme, "https")
+        XCTAssertEqual(components.host, "translation.test")
+        XCTAssertEqual(components.path, "/language/translate/v2")
+        XCTAssertEqual(queryItems["q"], "Hello team.")
+        XCTAssertEqual(queryItems["source"], "en")
+        XCTAssertEqual(queryItems["target"], "vi")
+        XCTAssertEqual(queryItems["format"], "text")
+        XCTAssertEqual(queryItems["key"], "google-key")
+        XCTAssertTrue(request.headers.isEmpty)
+        XCTAssertTrue(request.body.isEmpty)
+    }
+
+    func testGoogleTranslateAcceptsFullEndpointBaseURL() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(
+                    statusCode: 200,
+                    body: Data(#"{"data":{"translations":[{"translatedText":"안녕하세요."}]}}"#.utf8)
+                )
+            ]
+        )
+        let service = TranscriptTranslationService(
+            geminiAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            openAIAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: "google-key"),
+            transport: transport
+        )
+
+        _ = try await service.translate(
+            TranscriptTranslationRequest(
+                text: "Hello.",
+                sourceLanguage: .english,
+                targetLanguage: .korean,
+                providerConfig: TranscriptTranslationProviderConfiguration(
+                    provider: .googleTranslate,
+                    model: "unused",
+                    baseURL: URL(string: "https://translation.test/language/translate/v2")!
+                )
+            )
+        )
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+
+        XCTAssertTrue(request.url.absoluteString.hasPrefix("https://translation.test/language/translate/v2?"))
+    }
+
     func testMissingProviderKeyMapsToSafeTranslationError() async throws {
         let service = TranscriptTranslationService(
             geminiAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
             openAIAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
             transport: FixtureTranscriptTranslationHTTPTransport(responses: [])
         )
 
@@ -155,6 +238,41 @@ final class TranscriptTranslationServiceTests: XCTestCase {
         } catch let error as TranscriptTranslationError {
             XCTAssertEqual(error, .missingAPIKey(provider: .openAI))
             XCTAssertTrue(error.safeUserMessage.contains("API key is missing"))
+        }
+    }
+
+    func testGoogleTranslateMalformedResponseMapsToProviderSpecificError() async throws {
+        let service = TranscriptTranslationService(
+            geminiAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            openAIAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: "google-key"),
+            transport: FixtureTranscriptTranslationHTTPTransport(
+                responses: [
+                    TranscriptTranslationHTTPResponse(
+                        statusCode: 200,
+                        body: Data(#"{"data":{"translations":[{"translatedText":"   "}]}}"#.utf8)
+                    )
+                ]
+            )
+        )
+
+        do {
+            _ = try await service.translate(
+                TranscriptTranslationRequest(
+                    text: "Hello.",
+                    sourceLanguage: .english,
+                    targetLanguage: .korean,
+                    providerConfig: TranscriptTranslationProviderConfiguration(
+                        provider: .googleTranslate,
+                        model: "unused",
+                        baseURL: URL(string: "https://translation.test")!
+                    )
+                )
+            )
+            XCTFail("Expected malformed Google Translate response to fail.")
+        } catch let error as TranscriptTranslationError {
+            XCTAssertEqual(error, .malformedResponse(provider: .googleTranslate))
+            XCTAssertTrue(error.safeUserMessage.contains("Google Translate returned"))
         }
     }
 }
@@ -472,7 +590,7 @@ private actor FixtureTranscriptTranslationHTTPTransport: TranscriptTranslationHT
     }
 }
 
-private final class FixtureTranslationAPIKeyStore: GeminiAPIKeyStoring, OpenAIAPIKeyStoring {
+private final class FixtureTranslationAPIKeyStore: GeminiAPIKeyStoring, OpenAIAPIKeyStoring, GoogleTranslateAPIKeyStoring {
     private let apiKey: String?
 
     init(apiKey: String?) {
