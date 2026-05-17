@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct TranscriptRowsView: View {
+    private static let bottomAnchorID = "transcript-bottom-anchor"
+
     let rows: [TranscriptDisplayRow]
     let maxHeight: CGFloat
 
@@ -24,21 +26,49 @@ struct TranscriptRowsView: View {
             if rows.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                            TranscriptRow(row: row)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                                TranscriptRow(row: row)
 
-                            if index < rows.count - 1 {
-                                HairlineDivider()
+                                if index < rows.count - 1 {
+                                    HairlineDivider()
+                                }
                             }
+
+                            Color.clear
+                                .frame(height: 1)
+                                .id(Self.bottomAnchorID)
                         }
+                    }
+                    .onAppear {
+                        scrollToBottom(proxy)
+                    }
+                    .onChange(of: scrollSignature) { _, _ in
+                        scrollToBottom(proxy)
                     }
                 }
                 .frame(maxHeight: maxHeight)
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var scrollSignature: String {
+        rows
+            .map { row in
+                "\(row.id):\(row.text.count):\(row.originalText?.count ?? 0):\(row.endFrameIndex):\(row.state)"
+            }
+            .joined(separator: "|")
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.16)) {
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+        }
     }
 
     private var emptyState: some View {
