@@ -98,6 +98,81 @@ final class TranscriptTranslationServiceTests: XCTestCase {
         XCTAssertTrue(prompt.contains("finance, accounting, budgeting"))
     }
 
+    func testCustomPromptTemplateRendersForGemini() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(
+                    statusCode: 200,
+                    body: Data(#"{"candidates":[{"content":{"parts":[{"text":"Bonjour equipe."}]}}]}"#.utf8)
+                )
+            ]
+        )
+        let service = TranscriptTranslationService(
+            geminiAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: "gemini-key"),
+            openAIAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            transport: transport
+        )
+
+        _ = try await service.translate(
+            TranscriptTranslationRequest(
+                text: "Hello team.",
+                sourceLanguage: .english,
+                targetLanguage: TranscriptOutputLanguage(rawValue: "fr"),
+                providerConfig: TranscriptTranslationProviderConfiguration(
+                    provider: .gemini,
+                    model: "gemini-test",
+                    baseURL: URL(string: "https://gemini.test")!
+                ),
+                context: TranscriptTranslationContext(
+                    domain: .customPrompt,
+                    customPromptTemplate: "Only translate from {{source_language}} to {{target_language}}: {{transcript}}"
+                )
+            )
+        )
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+        let contents = try XCTUnwrap(body["contents"] as? [[String: Any]])
+        let parts = try XCTUnwrap(contents.first?["parts"] as? [[String: Any]])
+        let prompt = try XCTUnwrap(parts.first?["text"] as? String)
+
+        XCTAssertEqual(prompt, "Only translate from English to French: Hello team.")
+    }
+
+    func testInvalidCustomPromptTemplateFailsBeforeProviderRequest() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(responses: [])
+        let service = TranscriptTranslationService(
+            geminiAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: "gemini-key"),
+            openAIAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            transport: transport
+        )
+
+        do {
+            _ = try await service.translate(
+                TranscriptTranslationRequest(
+                    text: "Hello team.",
+                    sourceLanguage: .english,
+                    targetLanguage: .vietnamese,
+                    providerConfig: TranscriptTranslationProviderConfiguration(
+                        provider: .gemini,
+                        model: "gemini-test",
+                        baseURL: URL(string: "https://gemini.test")!
+                    ),
+                    context: TranscriptTranslationContext(
+                        domain: .customPrompt,
+                        customPromptTemplate: "Translate {{transcript}} to {{target_language}}."
+                    )
+                )
+            )
+            XCTFail("Expected invalid request for missing placeholder.")
+        } catch let error as TranscriptTranslationError {
+            XCTAssertEqual(error, .invalidRequest)
+        }
+
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testOpenAITranslationAppendsChatCompletionsPathForBaseURL() async throws {
         let transport = FixtureTranscriptTranslationHTTPTransport(
             responses: [
@@ -177,6 +252,43 @@ final class TranscriptTranslationServiceTests: XCTestCase {
         XCTAssertEqual(queryItems["key"], "google-key")
         XCTAssertTrue(request.headers.isEmpty)
         XCTAssertTrue(request.body.isEmpty)
+    }
+
+    func testGoogleTranslateOmitsSourceForAutoDetect() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(
+                    statusCode: 200,
+                    body: Data(#"{"data":{"translations":[{"translatedText":"Xin chao."}]}}"#.utf8)
+                )
+            ]
+        )
+        let service = TranscriptTranslationService(
+            geminiAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            openAIAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: nil),
+            googleTranslateAPIKeyStore: FixtureTranslationAPIKeyStore(apiKey: "google-key"),
+            transport: transport
+        )
+
+        _ = try await service.translate(
+            TranscriptTranslationRequest(
+                text: "Hello.",
+                sourceLanguage: .autoDetect,
+                targetLanguage: .vietnamese,
+                providerConfig: TranscriptTranslationProviderConfiguration(
+                    provider: .googleTranslate,
+                    model: "unused",
+                    baseURL: URL(string: "https://translation.test")!
+                )
+            )
+        )
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        let components = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false))
+        let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+
+        XCTAssertNil(queryItems["source"])
+        XCTAssertEqual(queryItems["target"], "vi")
     }
 
     func testGoogleTranslateAcceptsFullEndpointBaseURL() async throws {
@@ -473,6 +585,86 @@ final class TranscriptCoordinatorTranslationTests: XCTestCase {
         XCTAssertTrue(health.latestEvent?.contains("translation failed") == true)
     }
 
+    func testProtectedTranscriptMarkersAreRemovedBeforeTranslation() async throws {
+        let translator = FixtureTranscriptTranslator(result: .success("Xin chao team."))
+        let fixture = try Self.makeCoordinatorFixture(
+            workerText: "Bắt đầu Hello team. Kết thúc",
+            translator: translator
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        await fixture.coordinator.setTranslationConfiguration(
+            sourceLanguage: .english,
+            outputLanguage: .vietnamese,
+            providerConfig: Self.providerConfig()
+        )
+        await fixture.coordinator.ingest(fixture.chunk)
+
+        let chunk = try await MeetlessTestSupport.waitForValue(description: "translated chunk without protected markers") {
+            let chunks = await fixture.coordinator.currentTranscriptChunks()
+            return chunks.first
+        }
+        let requests = await translator.requests
+        let request = try XCTUnwrap(requests.first)
+
+        XCTAssertEqual(request.text, "Hello team.")
+        XCTAssertEqual(chunk.originalText, "Hello team.")
+        XCTAssertEqual(chunk.text, "Xin chao team.")
+        XCTAssertFalse(chunk.text.contains("Bắt đầu"))
+        XCTAssertFalse(chunk.text.contains("Kết thúc"))
+    }
+
+    func testProtectedMarkerOnlyTranscriptIsTreatedAsSilence() async throws {
+        let worker = RecordingTranscriptWorker(text: "Kết thúc.")
+        let translator = FixtureTranscriptTranslator(result: .success("Should not translate."))
+        let fixture = try Self.makeCoordinatorFixture(
+            worker: worker,
+            translator: translator,
+            sampleCount: 320,
+            minimumCommitSeconds: 0.01,
+            maximumCommitSeconds: 0.02
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        await fixture.coordinator.setTranslationConfiguration(
+            sourceLanguage: .english,
+            outputLanguage: .vietnamese,
+            providerConfig: Self.providerConfig()
+        )
+        await fixture.coordinator.ingest(fixture.chunk)
+
+        _ = try await MeetlessTestSupport.waitForValue(description: "marker-only transcript processed") {
+            await worker.didTranscribe ? true : nil
+        }
+        let chunks = await fixture.coordinator.currentTranscriptChunks()
+        let requestCount = await translator.requestCount
+
+        XCTAssertTrue(chunks.isEmpty)
+        XCTAssertEqual(requestCount, 0)
+    }
+
+    func testDisabledSourceSelectionIgnoresIncomingChunksForThatSource() async throws {
+        let translator = FixtureTranscriptTranslator(result: .success("Xin chao."))
+        let fixture = try Self.makeCoordinatorFixture(workerText: "Hello team.", translator: translator)
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+
+        await fixture.coordinator.setSourceSelection(
+            RecordingSourceSelection(meetingEnabled: false, meEnabled: true)
+        )
+        await fixture.coordinator.setTranslationConfiguration(
+            sourceLanguage: .english,
+            outputLanguage: .vietnamese,
+            providerConfig: Self.providerConfig()
+        )
+        await fixture.coordinator.ingest(fixture.chunk)
+
+        let chunks = await fixture.coordinator.currentTranscriptChunks()
+        let requestCount = await translator.requestCount
+
+        XCTAssertTrue(chunks.isEmpty)
+        XCTAssertEqual(requestCount, 0)
+    }
+
     private static func makeCoordinatorFixture(
         workerText: String,
         translator: FixtureTranscriptTranslator
@@ -551,6 +743,20 @@ private actor SequenceTranscriptWorker: TranscriptWindowTranscribing {
     func transcribeIncrementalWindow(samples: [Float]) async throws -> String {
         guard !texts.isEmpty else { return "" }
         return texts.removeFirst()
+    }
+}
+
+private actor RecordingTranscriptWorker: TranscriptWindowTranscribing {
+    private let text: String
+    private(set) var didTranscribe = false
+
+    init(text: String) {
+        self.text = text
+    }
+
+    func transcribeIncrementalWindow(samples: [Float]) async throws -> String {
+        didTranscribe = true
+        return text
     }
 }
 

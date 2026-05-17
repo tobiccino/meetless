@@ -24,29 +24,138 @@ enum WhisperBridgeError: LocalizedError {
     }
 }
 
-enum TranscriptionLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
-    case english = "en"
-    case korean = "ko"
+struct TranscriptionLanguage: RawRepresentable, CaseIterable, Identifiable, Codable, Sendable, Equatable, Hashable {
+    let rawValue: String
+    let displayName: String
 
     var id: String { rawValue }
+    var whisperCode: String { rawValue }
+    var isAutoDetect: Bool { rawValue == Self.autoDetect.rawValue }
 
-    var displayName: String {
-        switch self {
-        case .english:
-            return "English"
-        case .korean:
-            return "Korean"
-        }
-    }
-
-    var whisperCode: String {
-        rawValue
-    }
-
+    static let autoDetect = TranscriptionLanguage(rawValue: "auto", displayName: "Auto Detect")
+    static let english = TranscriptionLanguage(rawValue: "en", displayName: "English")
+    static let korean = TranscriptionLanguage(rawValue: "ko", displayName: "Korean")
+    static let vietnamese = TranscriptionLanguage(rawValue: "vi", displayName: "Vietnamese")
     static let defaultLanguage: TranscriptionLanguage = .english
 
+    static let allCases: [TranscriptionLanguage] = [.autoDetect] + supportedLanguages.sorted {
+        $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+    }
+
+    private static let supportedLanguages: [TranscriptionLanguage] = [
+        .english,
+        TranscriptionLanguage(rawValue: "zh", displayName: "Chinese"),
+        TranscriptionLanguage(rawValue: "de", displayName: "German"),
+        TranscriptionLanguage(rawValue: "es", displayName: "Spanish"),
+        TranscriptionLanguage(rawValue: "ru", displayName: "Russian"),
+        .korean,
+        TranscriptionLanguage(rawValue: "fr", displayName: "French"),
+        TranscriptionLanguage(rawValue: "ja", displayName: "Japanese"),
+        TranscriptionLanguage(rawValue: "pt", displayName: "Portuguese"),
+        TranscriptionLanguage(rawValue: "tr", displayName: "Turkish"),
+        TranscriptionLanguage(rawValue: "pl", displayName: "Polish"),
+        TranscriptionLanguage(rawValue: "ca", displayName: "Catalan"),
+        TranscriptionLanguage(rawValue: "nl", displayName: "Dutch"),
+        TranscriptionLanguage(rawValue: "ar", displayName: "Arabic"),
+        TranscriptionLanguage(rawValue: "sv", displayName: "Swedish"),
+        TranscriptionLanguage(rawValue: "it", displayName: "Italian"),
+        TranscriptionLanguage(rawValue: "id", displayName: "Indonesian"),
+        TranscriptionLanguage(rawValue: "hi", displayName: "Hindi"),
+        TranscriptionLanguage(rawValue: "fi", displayName: "Finnish"),
+        .vietnamese,
+        TranscriptionLanguage(rawValue: "he", displayName: "Hebrew"),
+        TranscriptionLanguage(rawValue: "uk", displayName: "Ukrainian"),
+        TranscriptionLanguage(rawValue: "el", displayName: "Greek"),
+        TranscriptionLanguage(rawValue: "ms", displayName: "Malay"),
+        TranscriptionLanguage(rawValue: "cs", displayName: "Czech"),
+        TranscriptionLanguage(rawValue: "ro", displayName: "Romanian"),
+        TranscriptionLanguage(rawValue: "da", displayName: "Danish"),
+        TranscriptionLanguage(rawValue: "hu", displayName: "Hungarian"),
+        TranscriptionLanguage(rawValue: "ta", displayName: "Tamil"),
+        TranscriptionLanguage(rawValue: "no", displayName: "Norwegian"),
+        TranscriptionLanguage(rawValue: "th", displayName: "Thai"),
+        TranscriptionLanguage(rawValue: "ur", displayName: "Urdu"),
+        TranscriptionLanguage(rawValue: "hr", displayName: "Croatian"),
+        TranscriptionLanguage(rawValue: "bg", displayName: "Bulgarian"),
+        TranscriptionLanguage(rawValue: "lt", displayName: "Lithuanian"),
+        TranscriptionLanguage(rawValue: "la", displayName: "Latin"),
+        TranscriptionLanguage(rawValue: "mi", displayName: "Maori"),
+        TranscriptionLanguage(rawValue: "ml", displayName: "Malayalam"),
+        TranscriptionLanguage(rawValue: "cy", displayName: "Welsh"),
+        TranscriptionLanguage(rawValue: "sk", displayName: "Slovak"),
+        TranscriptionLanguage(rawValue: "te", displayName: "Telugu"),
+        TranscriptionLanguage(rawValue: "fa", displayName: "Persian"),
+        TranscriptionLanguage(rawValue: "lv", displayName: "Latvian"),
+        TranscriptionLanguage(rawValue: "bn", displayName: "Bengali"),
+        TranscriptionLanguage(rawValue: "sr", displayName: "Serbian"),
+        TranscriptionLanguage(rawValue: "az", displayName: "Azerbaijani"),
+        TranscriptionLanguage(rawValue: "sl", displayName: "Slovenian"),
+        TranscriptionLanguage(rawValue: "kn", displayName: "Kannada"),
+        TranscriptionLanguage(rawValue: "et", displayName: "Estonian"),
+        TranscriptionLanguage(rawValue: "mk", displayName: "Macedonian"),
+        TranscriptionLanguage(rawValue: "br", displayName: "Breton"),
+        TranscriptionLanguage(rawValue: "eu", displayName: "Basque"),
+        TranscriptionLanguage(rawValue: "is", displayName: "Icelandic"),
+        TranscriptionLanguage(rawValue: "hy", displayName: "Armenian"),
+        TranscriptionLanguage(rawValue: "ne", displayName: "Nepali"),
+        TranscriptionLanguage(rawValue: "mn", displayName: "Mongolian"),
+        TranscriptionLanguage(rawValue: "bs", displayName: "Bosnian"),
+        TranscriptionLanguage(rawValue: "kk", displayName: "Kazakh"),
+        TranscriptionLanguage(rawValue: "sq", displayName: "Albanian"),
+        TranscriptionLanguage(rawValue: "sw", displayName: "Swahili"),
+        TranscriptionLanguage(rawValue: "gl", displayName: "Galician"),
+        TranscriptionLanguage(rawValue: "mr", displayName: "Marathi"),
+        TranscriptionLanguage(rawValue: "pa", displayName: "Punjabi"),
+        TranscriptionLanguage(rawValue: "si", displayName: "Sinhala"),
+        TranscriptionLanguage(rawValue: "km", displayName: "Khmer"),
+        TranscriptionLanguage(rawValue: "sn", displayName: "Shona"),
+        TranscriptionLanguage(rawValue: "yo", displayName: "Yoruba"),
+        TranscriptionLanguage(rawValue: "so", displayName: "Somali"),
+        TranscriptionLanguage(rawValue: "af", displayName: "Afrikaans"),
+        TranscriptionLanguage(rawValue: "oc", displayName: "Occitan"),
+        TranscriptionLanguage(rawValue: "ka", displayName: "Georgian"),
+        TranscriptionLanguage(rawValue: "be", displayName: "Belarusian"),
+        TranscriptionLanguage(rawValue: "tg", displayName: "Tajik"),
+        TranscriptionLanguage(rawValue: "sd", displayName: "Sindhi"),
+        TranscriptionLanguage(rawValue: "gu", displayName: "Gujarati"),
+        TranscriptionLanguage(rawValue: "am", displayName: "Amharic"),
+        TranscriptionLanguage(rawValue: "yi", displayName: "Yiddish"),
+        TranscriptionLanguage(rawValue: "lo", displayName: "Lao"),
+        TranscriptionLanguage(rawValue: "uz", displayName: "Uzbek"),
+        TranscriptionLanguage(rawValue: "fo", displayName: "Faroese"),
+        TranscriptionLanguage(rawValue: "ht", displayName: "Haitian Creole"),
+        TranscriptionLanguage(rawValue: "ps", displayName: "Pashto"),
+        TranscriptionLanguage(rawValue: "tk", displayName: "Turkmen"),
+        TranscriptionLanguage(rawValue: "nn", displayName: "Nynorsk"),
+        TranscriptionLanguage(rawValue: "mt", displayName: "Maltese"),
+        TranscriptionLanguage(rawValue: "sa", displayName: "Sanskrit"),
+        TranscriptionLanguage(rawValue: "lb", displayName: "Luxembourgish"),
+        TranscriptionLanguage(rawValue: "my", displayName: "Myanmar"),
+        TranscriptionLanguage(rawValue: "bo", displayName: "Tibetan"),
+        TranscriptionLanguage(rawValue: "tl", displayName: "Tagalog"),
+        TranscriptionLanguage(rawValue: "mg", displayName: "Malagasy"),
+        TranscriptionLanguage(rawValue: "as", displayName: "Assamese"),
+        TranscriptionLanguage(rawValue: "tt", displayName: "Tatar"),
+        TranscriptionLanguage(rawValue: "haw", displayName: "Hawaiian"),
+        TranscriptionLanguage(rawValue: "ln", displayName: "Lingala"),
+        TranscriptionLanguage(rawValue: "ha", displayName: "Hausa"),
+        TranscriptionLanguage(rawValue: "ba", displayName: "Bashkir"),
+        TranscriptionLanguage(rawValue: "jw", displayName: "Javanese"),
+        TranscriptionLanguage(rawValue: "su", displayName: "Sundanese"),
+        TranscriptionLanguage(rawValue: "yue", displayName: "Cantonese")
+    ]
+
+    init(rawValue: String) {
+        self = Self.allCases.first { $0.rawValue == rawValue } ?? Self.defaultLanguage
+    }
+
+    init(rawValue: String, displayName: String) {
+        self.rawValue = rawValue
+        self.displayName = displayName
+    }
+
     init(storedValue: String?) {
-        self = storedValue.flatMap(Self.init(rawValue:)) ?? Self.defaultLanguage
+        self = storedValue.map(Self.init(rawValue:)) ?? Self.defaultLanguage
     }
 }
 

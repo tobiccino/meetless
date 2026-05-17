@@ -258,7 +258,7 @@ private enum SavedSessionNoticeFactory {
         let title: String
 
         switch sourceStatus.state {
-        case .ready:
+        case .ready, .disabled:
             return nil
         case .blocked:
             title = "\(sourceStatus.source.rawValue) source was blocked"
@@ -337,7 +337,7 @@ actor SessionRepository {
             transcriptSnapshotWarning: nil,
             transcriptSnapshotFilename: session.transcriptURL.lastPathComponent,
             generatedNotesFilename: nil,
-            audioArtifacts: RecordingSourceKind.allCases.map { source in
+            audioArtifacts: Self.sourcesWithAudioArtifacts(from: sourceStatuses).map { source in
                 SessionAudioArtifact(
                     source: source,
                     filename: source.artifactFilename,
@@ -447,7 +447,7 @@ actor SessionRepository {
         let manifest = try loadManifest(for: session)
         let artifactsBySource = Dictionary(uniqueKeysWithValues: manifest.audioArtifacts.map { ($0.source, $0) })
 
-        let artifacts = try RecordingSourceKind.allCases.map { source -> SessionAudioArtifactForUpload in
+        let artifacts = try Self.sourcesWithAudioArtifacts(from: manifest.sourceStatuses).map { source -> SessionAudioArtifactForUpload in
             guard let artifact = artifactsBySource[source] else {
                 throw SessionAudioArtifactResolutionError.missingManifestEntry(source: source)
             }
@@ -720,6 +720,19 @@ actor SessionRepository {
             let originalURL = session.directoryURL.appendingPathComponent(artifact.source.artifactFilename, isDirectory: false)
             try? fileManager.removeItem(at: originalURL)
         }
+    }
+
+    private static func sourcesWithAudioArtifacts(from sourceStatuses: [SourcePipelineStatus]) -> [RecordingSourceKind] {
+        guard !sourceStatuses.isEmpty else {
+            return RecordingSourceKind.allCases
+        }
+
+        let disabledSources = Set(
+            sourceStatuses
+                .filter { $0.state == .disabled }
+                .map(\.source)
+        )
+        return RecordingSourceKind.allCases.filter { !disabledSources.contains($0) }
     }
 
     private static func defaultTitle(for startedAt: Date) -> String {

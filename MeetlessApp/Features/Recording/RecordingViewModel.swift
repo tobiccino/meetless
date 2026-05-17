@@ -18,6 +18,7 @@ enum SourcePipelineState: String, Codable, Sendable {
     case ready
     case blocked
     case monitoring
+    case disabled
     case degraded
 }
 
@@ -42,6 +43,68 @@ enum RecordingSourceKind: String, Identifiable, CaseIterable, Codable, Sendable 
             return "meeting.m4a"
         case .me:
             return "me.m4a"
+        }
+    }
+}
+
+struct RecordingSourceSelection: Equatable, Codable, Sendable {
+    let meetingEnabled: Bool
+    let meEnabled: Bool
+
+    static let defaultSelection = RecordingSourceSelection(meetingEnabled: true, meEnabled: true)
+
+    init(meetingEnabled: Bool, meEnabled: Bool) {
+        if !meetingEnabled, !meEnabled {
+            self.meetingEnabled = true
+            self.meEnabled = true
+        } else {
+            self.meetingEnabled = meetingEnabled
+            self.meEnabled = meEnabled
+        }
+    }
+
+    func contains(_ source: RecordingSourceKind) -> Bool {
+        switch source {
+        case .meeting:
+            return meetingEnabled
+        case .me:
+            return meEnabled
+        }
+    }
+
+    var enabledSources: [RecordingSourceKind] {
+        RecordingSourceKind.allCases.filter(contains)
+    }
+}
+
+protocol RecordingSourceSelectionStoring: AnyObject {
+    var recordingSourceSelection: RecordingSourceSelection { get set }
+}
+
+final class UserDefaultsRecordingSourceSelectionStore: RecordingSourceSelectionStoring {
+    private let userDefaults: UserDefaults
+    private let meetingEnabledKey: String
+    private let meEnabledKey: String
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        meetingEnabledKey: String = "meetless.recordingSource.meeting.enabled",
+        meEnabledKey: String = "meetless.recordingSource.me.enabled"
+    ) {
+        self.userDefaults = userDefaults
+        self.meetingEnabledKey = meetingEnabledKey
+        self.meEnabledKey = meEnabledKey
+    }
+
+    var recordingSourceSelection: RecordingSourceSelection {
+        get {
+            let meetingEnabled = userDefaults.object(forKey: meetingEnabledKey) as? Bool ?? true
+            let meEnabled = userDefaults.object(forKey: meEnabledKey) as? Bool ?? true
+            return RecordingSourceSelection(meetingEnabled: meetingEnabled, meEnabled: meEnabled)
+        }
+        set {
+            userDefaults.set(newValue.meetingEnabled, forKey: meetingEnabledKey)
+            userDefaults.set(newValue.meEnabled, forKey: meEnabledKey)
         }
     }
 }
@@ -196,7 +259,7 @@ struct SmokeTranscriptionSnapshot: Sendable {
 }
 
 protocol RecordingCoordinating {
-    func startShellSession() async throws -> RecordingStatusSnapshot
+    func startShellSession(sourceSelection: RecordingSourceSelection) async throws -> RecordingStatusSnapshot
     func stopShellSession() async throws -> RecordingStatusSnapshot
     func currentRecordingSnapshot() async -> RecordingStatusSnapshot?
     func runSmokeTranscription() async throws -> SmokeTranscriptionSnapshot
@@ -336,7 +399,11 @@ private struct ActiveTranscriptTranslationConfiguration: Sendable {
     let context: TranscriptTranslationContext
 
     var shouldTranslate: Bool {
-        TranscriptOutputLanguage(transcriptionLanguage: sourceLanguage) != outputLanguage
+        if sourceLanguage.isAutoDetect {
+            return true
+        }
+
+        return TranscriptOutputLanguage(transcriptionLanguage: sourceLanguage) != outputLanguage
     }
 }
 
@@ -420,6 +487,7 @@ actor TranscriptCoordinator {
     private var degradationLatestEvent: String?
     private var translationConfiguration: ActiveTranscriptTranslationConfiguration?
     private var pendingTranslationSegments: [RecordingSourceKind: PendingTranslationSegment] = [:]
+    private var sourceSelection = RecordingSourceSelection.defaultSelection
 
     init(
         meetingWorker: any TranscriptWindowTranscribing,
@@ -450,10 +518,20 @@ actor TranscriptCoordinator {
         degradedSourceStatuses.removeAll()
         degradationLatestEvent = nil
         pendingTranslationSegments.removeAll()
+        sourceSelection = .defaultSelection
         lanes = [
             .meeting: SourceTranscriptLane(source: .meeting),
             .me: SourceTranscriptLane(source: .me)
         ]
+    }
+
+    func setSourceSelection(_ selection: RecordingSourceSelection) {
+        sourceSelection = selection
+        for source in RecordingSourceKind.allCases where !selection.contains(source) {
+            lanes[source] = SourceTranscriptLane(source: source)
+            pendingTranslationSegments[source] = nil
+            retryCounts = retryCounts.filter { $0.key.source != source }
+        }
     }
 
     fileprivate func setSnapshotHandler(_ handler: TranscriptSnapshotHandler?) {
@@ -476,6 +554,7 @@ actor TranscriptCoordinator {
 
     func ingest(_ chunk: SourceAudioChunk) {
         guard !isFrozen else { return }
+        guard sourceSelection.contains(chunk.source) else { return }
         guard var lane = lanes[chunk.source] else { return }
         lane.append(chunk)
         lanes[chunk.source] = lane
@@ -948,7 +1027,45 @@ actor TranscriptCoordinator {
             return nil
         }
 
-        return trimmedText
+        return transcriptTextRemovingProtectedMarkers(trimmedText)
+    }
+
+    private static func transcriptTextRemovingProtectedMarkers(_ text: String) -> String? {
+        let markerPhrasePattern = #"(?:Bắt\s+đầu|Kết\s+thúc)"#
+        let markerPattern = #"(?<![\p{L}\p{N}])\#(markerPhrasePattern)(?![\p{L}\p{N}])"#
+        guard let regex = try? NSRegularExpression(pattern: markerPattern, options: [.caseInsensitive]) else {
+            return text
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard regex.firstMatch(in: text, options: [], range: range) != nil else {
+            return text
+        }
+
+        let startsWithMarker = text.range(
+            of: #"^\s*\#(markerPhrasePattern)(?=$|[\s\p{P}\p{S}])"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        let endsWithMarker = text.range(
+            of: #"(?<![\p{L}\p{N}])\#(markerPhrasePattern)[\s\p{P}\p{S}]*$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        let mutableText = NSMutableString(string: text)
+        regex.replaceMatches(in: mutableText, options: [], range: NSRange(location: 0, length: mutableText.length), withTemplate: "")
+        var cleanedText = String(mutableText)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+([,.!?…。！？])"#, with: "$1", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if startsWithMarker {
+            cleanedText = cleanedText.trimmingLeadingCharacters(
+                in: .punctuationCharacters.union(.symbols).union(.whitespacesAndNewlines)
+            )
+        }
+        if endsWithMarker, !cleanedText.contains(where: { $0.isLetter || $0.isNumber }) {
+            cleanedText = ""
+        }
+        return cleanedText.isEmpty ? nil : cleanedText
     }
 
     private static func hasTerminalSentenceBoundary(_ text: String) -> Bool {
@@ -1112,24 +1229,13 @@ actor TranscriptCoordinator {
 actor PreviewRecordingCoordinator: RecordingCoordinating {
     private var liveSnapshot: RecordingStatusSnapshot?
 
-    func startShellSession() async throws -> RecordingStatusSnapshot {
+    func startShellSession(sourceSelection: RecordingSourceSelection = .defaultSelection) async throws -> RecordingStatusSnapshot {
         let snapshot = RecordingStatusSnapshot(
             phase: .recording,
             headline: "Recording shell is active",
             detail: "The real ScreenCaptureKit and whisper workers connect here in the next beads.",
             latestEvent: "Start tapped. This placeholder state proves the control surface and status banner wiring.",
-            sourceStatuses: [
-                SourcePipelineStatus(
-                    source: .meeting,
-                    detail: "Awaiting system-audio frames from the future capture engine.",
-                    state: .monitoring
-                ),
-                SourcePipelineStatus(
-                    source: .me,
-                    detail: "Awaiting microphone frames from the future input pipeline.",
-                    state: .monitoring
-                )
-            ],
+            sourceStatuses: Self.previewSourceStatuses(for: sourceSelection, activeState: .monitoring),
             repairActions: [],
             transcriptChunks: Self.previewTranscriptChunks
         )
@@ -1197,6 +1303,27 @@ actor PreviewRecordingCoordinator: RecordingCoordinating {
             )
         ]
     }
+
+    private static func previewSourceStatuses(
+        for selection: RecordingSourceSelection,
+        activeState: SourcePipelineState
+    ) -> [SourcePipelineStatus] {
+        RecordingSourceKind.allCases.map { source in
+            if selection.contains(source) {
+                return SourcePipelineStatus(
+                    source: source,
+                    detail: "\(source.rawValue) preview lane is active.",
+                    state: activeState
+                )
+            }
+
+            return SourcePipelineStatus(
+                source: source,
+                detail: "\(source.rawValue) preview lane is disabled.",
+                state: .disabled
+            )
+        }
+    }
 }
 
 actor MeetlessRecordingCoordinator: RecordingCoordinating {
@@ -1243,10 +1370,10 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         )
     }
 
-    func startShellSession() async throws -> RecordingStatusSnapshot {
+    func startShellSession(sourceSelection: RecordingSourceSelection = .defaultSelection) async throws -> RecordingStatusSnapshot {
         logger.notice("startShellSession begin")
         await applyCurrentTranscriptionLanguage()
-        let readiness = await permissionGate.evaluateStartReadiness()
+        let readiness = await permissionGate.evaluateStartReadiness(sourceSelection: sourceSelection)
         logger.notice("permission readiness evaluated; ready=\(readiness.isReady, privacy: .public) repairCount=\(readiness.repairActions.count, privacy: .public)")
         if !readiness.isReady {
             logger.notice("startShellSession blocked by permission readiness")
@@ -1255,7 +1382,10 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
                 headline: "Recording is blocked until permissions are repaired",
                 detail: "Meetless only asks for permissions when you press Record. Repair the missing access below, then retry the recording flow.",
                 latestEvent: readiness.repairActions.map(\.detail).joined(separator: " "),
-                sourceStatuses: MeetlessRecordingCoordinator.blockedSourceStatuses(for: readiness.repairActions),
+                sourceStatuses: MeetlessRecordingCoordinator.blockedSourceStatuses(
+                    for: readiness.repairActions,
+                    sourceSelection: sourceSelection
+                ),
                 repairActions: readiness.repairActions,
                 transcriptChunks: []
             )
@@ -1265,10 +1395,11 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
 
         await transcriptCoordinator.setSnapshotHandler(nil)
         await transcriptCoordinator.reset()
+        await transcriptCoordinator.setSourceSelection(sourceSelection)
         activeSession = nil
         transcriptSnapshotPersistenceIssue = nil
         logger.notice("starting ScreenCaptureSession")
-        let capture = try await captureSession.start { [transcriptCoordinator] audioChunk in
+        let capture = try await captureSession.start(sourceSelection: sourceSelection) { [transcriptCoordinator] audioChunk in
             Task(priority: .utility) {
                 await transcriptCoordinator.ingest(audioChunk)
             }
@@ -1315,7 +1446,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         let snapshot = RecordingStatusSnapshot(
             phase: .recording,
             headline: "Recording session is live",
-            detail: "Meetless is capturing Meeting from ScreenCaptureKit system audio and Me from ScreenCaptureKit microphone capture, writing both source artifacts directly into the Application Support session bundle, and snapshotting committed transcript chunks as the local whisper workers finish them.",
+            detail: "Meetless is capturing enabled sources, writing their artifacts directly into the Application Support session bundle, and snapshotting committed transcript chunks as the local whisper workers finish them.",
             latestEvent: capture.latestEvent,
             sourceStatuses: capture.sourceStatuses,
             repairActions: [],
@@ -1366,26 +1497,26 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
         if snapshotPersistenceIssue != nil {
             savedSessionHeadline = "Capture stopped with a stale saved transcript snapshot"
             if finalStatus == .completed {
-                savedSessionDetail = "Capture stopped, but Meetless could not keep transcript.json aligned with the visible timeline before the session closed. Reopening this bundle may show an older transcript snapshot, while the durable Meeting and Me audio artifacts remain intact."
+                savedSessionDetail = "Capture stopped, but Meetless could not keep transcript.json aligned with the visible timeline before the session closed. Reopening this bundle may show an older transcript snapshot, while the durable enabled-source audio artifacts remain intact."
             } else {
-                savedSessionDetail = "Capture ended unexpectedly, and Meetless also could not keep transcript.json aligned with the visible timeline before the session closed. Reopening this bundle may show an older transcript snapshot, while the durable Meeting and Me audio artifacts remain intact."
+                savedSessionDetail = "Capture ended unexpectedly, and Meetless also could not keep transcript.json aligned with the visible timeline before the session closed. Reopening this bundle may show an older transcript snapshot, while the durable enabled-source audio artifacts remain intact."
             }
         } else if transcriptHealth.hasDegradedSource {
             let sourceNames = Self.formattedSourceList(for: transcriptHealth.sourceStatuses)
             savedSessionHeadline = "Capture stopped with partial transcript coverage"
             if finalStatus == .completed {
-                savedSessionDetail = "Capture stopped, and the saved bundle still holds durable Meeting and Me audio artifacts plus the display transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
+                savedSessionDetail = "Capture stopped, and the saved bundle still holds durable enabled-source audio artifacts plus the display transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
             } else {
-                savedSessionDetail = "Capture ended unexpectedly, but the saved bundle still holds durable Meeting and Me audio artifacts plus the display transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
+                savedSessionDetail = "Capture ended unexpectedly, but the saved bundle still holds durable enabled-source audio artifacts plus the display transcript snapshot. Transcript coverage is partial for \(sourceNames) because Meetless had to drop a retry-exhausted transcription window."
             }
         } else {
             savedSessionHeadline = finalStatus == .completed ? "Capture stopped cleanly" : "Capture ended with an incomplete saved session"
             savedSessionDetail = capture.map {
                 if finalStatus == .completed {
-                    return "The ScreenCaptureKit session is down, and the saved Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) now holds the committed display transcript snapshot plus durable Meeting and Me audio artifacts."
+                    return "The ScreenCaptureKit session is down, and the saved Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) now holds the committed display transcript snapshot plus durable enabled-source audio artifacts."
                 }
 
-                return "Capture ended unexpectedly, but the Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) still keeps the last committed transcript snapshot and durable Meeting and Me audio artifacts for incomplete-session recovery."
+                return "Capture ended unexpectedly, but the Application Support bundle in \($0.artifactDirectoryURL.lastPathComponent) still keeps the last committed transcript snapshot and durable enabled-source audio artifacts for incomplete-session recovery."
             } ?? "The ScreenCaptureKit session is down, the live transcript timeline remains as last shown, and the shell is ready for another local recording attempt."
         }
 
@@ -1432,7 +1563,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             detail = "One source degraded, but Meetless kept the surviving source alive and continues writing durable per-source PCM while preserving the committed transcript timeline."
         } else {
             headline = "Recording session is live"
-            detail = "Meeting comes from ScreenCaptureKit system audio while Me comes from ScreenCaptureKit microphone capture; both are normalized into 16 kHz mono PCM, written durably during the session, and merged into one committed transcript timeline."
+            detail = "Enabled sources are normalized into 16 kHz mono PCM, written durably during the session, and merged into one committed transcript timeline."
         }
 
         let snapshot = RecordingStatusSnapshot(
@@ -1498,32 +1629,48 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
                 baseURL: transcriptionSettingsStore.translationBaseURL(for: provider)
             ),
             context: TranscriptTranslationContext(
-                domain: transcriptionSettingsStore.transcriptTranslationDomain
+                domain: transcriptionSettingsStore.transcriptTranslationDomain,
+                customPromptTemplate: transcriptionSettingsStore.customTranslationPromptTemplate
             )
         )
         logger.notice("transcription settings set for next whisper work: language=\(language.whisperCode, privacy: .public) model=\(modelURL.lastPathComponent, privacy: .public)")
         return modelURL.lastPathComponent
     }
 
-    private static func blockedSourceStatuses(for repairActions: [PermissionRepairAction]) -> [SourcePipelineStatus] {
+    private static func blockedSourceStatuses(
+        for repairActions: [PermissionRepairAction],
+        sourceSelection: RecordingSourceSelection = .defaultSelection
+    ) -> [SourcePipelineStatus] {
         let blockedKinds = Set(repairActions.map(\.kind))
 
-        return [
-            SourcePipelineStatus(
-                source: .meeting,
-                detail: blockedKinds.contains(.screenRecording)
-                    ? "Meeting capture needs Screen Recording access before the whole-system audio lane can start."
-                    : "Meeting capture is ready once its repair requirements are cleared.",
-                state: blockedKinds.contains(.screenRecording) ? .blocked : .ready
-            ),
-            SourcePipelineStatus(
-                source: .me,
-                detail: blockedKinds.contains(.microphone)
-                    ? "Me capture needs microphone access before the personal voice lane can start."
-                    : "Me capture is ready once its repair requirements are cleared.",
-                state: blockedKinds.contains(.microphone) ? .blocked : .ready
-            )
-        ]
+        return RecordingSourceKind.allCases.map { source in
+            guard sourceSelection.contains(source) else {
+                return SourcePipelineStatus(
+                    source: source,
+                    detail: "\(source.rawValue) capture is disabled for this recording.",
+                    state: .disabled
+                )
+            }
+
+            switch source {
+            case .meeting:
+                return SourcePipelineStatus(
+                    source: .meeting,
+                    detail: blockedKinds.contains(.screenRecording)
+                        ? "Meeting capture needs Screen Recording access before the whole-system audio lane can start."
+                        : "Meeting capture is ready once its repair requirements are cleared.",
+                    state: blockedKinds.contains(.screenRecording) ? .blocked : .ready
+                )
+            case .me:
+                return SourcePipelineStatus(
+                    source: .me,
+                    detail: blockedKinds.contains(.microphone)
+                        ? "Me capture needs microphone access before the personal voice lane can start."
+                        : "Me capture is ready once its repair requirements are cleared.",
+                    state: blockedKinds.contains(.microphone) ? .blocked : .ready
+                )
+            }
+        }
     }
 
     private func mergedSourceStatuses(
@@ -1548,7 +1695,7 @@ actor MeetlessRecordingCoordinator: RecordingCoordinating {
             switch captureStatus.state {
             case .ready, .monitoring:
                 return transcriptStatus
-            case .blocked:
+            case .blocked, .disabled:
                 return captureStatus
             case .degraded:
                 if captureStatus.detail.contains(transcriptStatus.detail) {
@@ -1603,12 +1750,22 @@ final class RecordingViewModel: ObservableObject {
     @Published private(set) var smokeDetail = "Run the smoke action to load the selected local model and transcribe the bundled sample inside the app process."
     @Published private(set) var smokeTranscript = "No smoke transcription has run yet."
     @Published private(set) var isSmokeBusy = false
+    @Published private(set) var meetingLaneEnabled: Bool
+    @Published private(set) var meLaneEnabled: Bool
 
     private let coordinator: any RecordingCoordinating
+    private let sourceSelectionStore: any RecordingSourceSelectionStoring
     private var statusPollingTask: Task<Void, Never>?
 
-    init(coordinator: any RecordingCoordinating) {
+    init(
+        coordinator: any RecordingCoordinating,
+        sourceSelectionStore: any RecordingSourceSelectionStoring = UserDefaultsRecordingSourceSelectionStore()
+    ) {
         self.coordinator = coordinator
+        self.sourceSelectionStore = sourceSelectionStore
+        let sourceSelection = sourceSelectionStore.recordingSourceSelection
+        self.meetingLaneEnabled = sourceSelection.meetingEnabled
+        self.meLaneEnabled = sourceSelection.meEnabled
     }
 
     var controlTitle: String {
@@ -1668,6 +1825,35 @@ final class RecordingViewModel: ObservableObject {
         }
     }
 
+    var isSourceSelectionLocked: Bool {
+        phase != .idle || isBusy
+    }
+
+    var recordingSourceSelection: RecordingSourceSelection {
+        RecordingSourceSelection(
+            meetingEnabled: meetingLaneEnabled,
+            meEnabled: meLaneEnabled
+        )
+    }
+
+    func setMeetingLaneEnabled(_ isEnabled: Bool) {
+        setSourceSelection(
+            RecordingSourceSelection(
+                meetingEnabled: isEnabled,
+                meEnabled: meLaneEnabled
+            )
+        )
+    }
+
+    func setMeLaneEnabled(_ isEnabled: Bool) {
+        setSourceSelection(
+            RecordingSourceSelection(
+                meetingEnabled: meetingLaneEnabled,
+                meEnabled: isEnabled
+            )
+        )
+    }
+
     func toggleRecording() {
         self.logger.notice("toggleRecording tapped; phase=\(String(describing: self.phase), privacy: .public) isBusy=\(self.isBusy, privacy: .public)")
         Task {
@@ -1692,7 +1878,7 @@ final class RecordingViewModel: ObservableObject {
             switch phase {
             case .idle, .blocked:
                 self.logger.notice("performToggle starting shell session")
-                snapshot = try await coordinator.startShellSession()
+                snapshot = try await coordinator.startShellSession(sourceSelection: recordingSourceSelection)
             case .recording:
                 self.logger.notice("performToggle stopping shell session")
                 snapshot = try await coordinator.stopShellSession()
@@ -1780,5 +1966,23 @@ final class RecordingViewModel: ObservableObject {
     private func stopStatusPolling() {
         statusPollingTask?.cancel()
         statusPollingTask = nil
+    }
+
+    private func setSourceSelection(_ selection: RecordingSourceSelection) {
+        guard !isSourceSelectionLocked else { return }
+        let normalizedSelection = selection
+        meetingLaneEnabled = normalizedSelection.meetingEnabled
+        meLaneEnabled = normalizedSelection.meEnabled
+        sourceSelectionStore.recordingSourceSelection = normalizedSelection
+    }
+}
+
+private extension String {
+    func trimmingLeadingCharacters(in characterSet: CharacterSet) -> String {
+        guard let firstKeptIndex = unicodeScalars.firstIndex(where: { !characterSet.contains($0) }) else {
+            return ""
+        }
+
+        return String(self[firstKeptIndex...])
     }
 }

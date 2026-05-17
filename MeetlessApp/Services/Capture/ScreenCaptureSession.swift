@@ -51,10 +51,12 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
     private var displayID: CGDirectDisplayID?
     private var meetingPipeline: SourceAudioPipeline?
     private var microphonePipeline: SourceAudioPipeline?
+    private var sourceSelection = RecordingSourceSelection.defaultSelection
     private var latestEvent = "No recording has started yet."
     private(set) var lastStopErrorDescription: String?
 
     func start(
+        sourceSelection: RecordingSourceSelection = .defaultSelection,
         chunkHandler: @escaping @Sendable (SourceAudioChunk) -> Void = { _ in }
     ) async throws -> CaptureSessionSnapshot {
         logger.notice("ScreenCaptureSession.start begin")
@@ -83,8 +85,8 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
         )
 
         let configuration = SCStreamConfiguration()
-        configuration.capturesAudio = true
-        configuration.captureMicrophone = true
+        configuration.capturesAudio = sourceSelection.meetingEnabled
+        configuration.captureMicrophone = sourceSelection.meEnabled
         configuration.excludesCurrentProcessAudio = true
         configuration.sampleRate = 48_000
         configuration.channelCount = 2
@@ -93,33 +95,45 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
         configuration.showsCursor = false
 
         let sessionScratch = try RecordingScratchSession.create()
-        let meetingPipeline = try SourceAudioPipeline(
-            source: .meeting,
-            fileURL: sessionScratch.audioFileURL(for: .meeting),
-            chunkHandler: chunkHandler
-        )
-        let microphonePipeline = try SourceAudioPipeline(
-            source: .me,
-            fileURL: sessionScratch.audioFileURL(for: .me),
-            chunkHandler: chunkHandler
-        )
+        let meetingPipeline = sourceSelection.meetingEnabled
+            ? try SourceAudioPipeline(
+                source: .meeting,
+                fileURL: sessionScratch.audioFileURL(for: .meeting),
+                chunkHandler: chunkHandler
+            )
+            : nil
+        let microphonePipeline = sourceSelection.meEnabled
+            ? try SourceAudioPipeline(
+                source: .me,
+                fileURL: sessionScratch.audioFileURL(for: .me),
+                chunkHandler: chunkHandler
+            )
+            : nil
 
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        let meetingSink = CaptureSampleSink(source: .meeting) { [weak self] source, sampleBuffer in
-            self?.handleSampleBuffer(sampleBuffer, from: source)
-        }
-        let microphoneSink = CaptureSampleSink(source: .me) { [weak self] source, sampleBuffer in
-            self?.handleSampleBuffer(sampleBuffer, from: source)
-        }
+        let meetingSink = sourceSelection.meetingEnabled
+            ? CaptureSampleSink(source: .meeting) { [weak self] source, sampleBuffer in
+                self?.handleSampleBuffer(sampleBuffer, from: source)
+            }
+            : nil
+        let microphoneSink = sourceSelection.meEnabled
+            ? CaptureSampleSink(source: .me) { [weak self] source, sampleBuffer in
+                self?.handleSampleBuffer(sampleBuffer, from: source)
+            }
+            : nil
 
-        try stream.addStreamOutput(meetingSink, type: .audio, sampleHandlerQueue: outputQueue)
+        if let meetingSink {
+            try stream.addStreamOutput(meetingSink, type: .audio, sampleHandlerQueue: outputQueue)
+        }
         var microphoneOutputError: Error?
-        do {
-            try stream.addStreamOutput(microphoneSink, type: .microphone, sampleHandlerQueue: outputQueue)
-        } catch {
-            microphoneOutputError = error
-            microphonePipeline.markDegraded(reason: error.localizedDescription)
-            logger.error("ScreenCaptureKit microphone output failed: \(error.localizedDescription, privacy: .public)")
+        if let microphoneSink {
+            do {
+                try stream.addStreamOutput(microphoneSink, type: .microphone, sampleHandlerQueue: outputQueue)
+            } catch {
+                microphoneOutputError = error
+                microphonePipeline?.markDegraded(reason: error.localizedDescription)
+                logger.error("ScreenCaptureKit microphone output failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
         logger.notice("awaiting stream.startCapture on displayID=\(display.displayID, privacy: .public)")
         try await stream.startCapture()
@@ -132,10 +146,11 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
         self.displayID = display.displayID
         self.meetingPipeline = meetingPipeline
         self.microphonePipeline = microphonePipeline
+        self.sourceSelection = sourceSelection
         if let microphoneOutputError {
             self.latestEvent = "ScreenCaptureKit started on display \(display.displayID), but the microphone output degraded: \(microphoneOutputError.localizedDescription)"
         } else {
-            self.latestEvent = "ScreenCaptureKit started on display \(display.displayID). Meeting now comes from system audio while Me comes from ScreenCaptureKit microphone capture inside \(sessionScratch.directoryURL.lastPathComponent)."
+            self.latestEvent = "ScreenCaptureKit started on display \(display.displayID). \(Self.enabledSourceDescription(for: sourceSelection)) inside \(sessionScratch.directoryURL.lastPathComponent)."
         }
         self.lastStopErrorDescription = nil
         logger.notice("ScreenCaptureSession.start completed; sessionID=\(PublicLogRedaction.sessionIdentifier(for: sessionScratch.directoryURL), privacy: .public)")
@@ -201,6 +216,7 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
         self.displayID = nil
         self.meetingPipeline = nil
         self.microphonePipeline = nil
+        self.sourceSelection = .defaultSelection
         logger.notice("ScreenCaptureSession.stop completed")
         return snapshot
     }
@@ -232,9 +248,38 @@ final class ScreenCaptureSession: NSObject, SCStreamDelegate {
     private func currentSourceStatuses() -> [SourcePipelineStatus] {
         [
             meetingPipeline?.snapshot()
-                ?? SourcePipelineStatus(source: .meeting, detail: "Meeting is waiting for capture to start.", state: .ready),
+                ?? disabledOrWaitingStatus(for: .meeting),
             microphonePipeline?.snapshot()
-                ?? SourcePipelineStatus(source: .me, detail: "Me is waiting for capture to start.", state: .ready)
+                ?? disabledOrWaitingStatus(for: .me)
         ]
+    }
+
+    private func disabledOrWaitingStatus(for source: RecordingSourceKind) -> SourcePipelineStatus {
+        if sessionScratch != nil, !sourceSelection.contains(source) {
+            return SourcePipelineStatus(
+                source: source,
+                detail: "\(source.rawValue) capture is disabled for this recording.",
+                state: .disabled
+            )
+        }
+
+        return SourcePipelineStatus(
+            source: source,
+            detail: "\(source.rawValue) is waiting for capture to start.",
+            state: .ready
+        )
+    }
+
+    private static func enabledSourceDescription(for selection: RecordingSourceSelection) -> String {
+        switch (selection.meetingEnabled, selection.meEnabled) {
+        case (true, true):
+            return "Meeting comes from system audio while Me comes from ScreenCaptureKit microphone capture"
+        case (true, false):
+            return "Meeting comes from system audio"
+        case (false, true):
+            return "Me comes from ScreenCaptureKit microphone capture"
+        case (false, false):
+            return "Meeting and Me capture are disabled"
+        }
     }
 }

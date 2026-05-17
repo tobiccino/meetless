@@ -49,43 +49,57 @@ struct PermissionReadinessSnapshot: Sendable {
 struct RecordingPermissionGate {
     private let logger = Logger(subsystem: "com.themrb.meetless", category: "permission-gate")
 
-    func evaluateStartReadiness() async -> PermissionReadinessSnapshot {
+    func evaluateStartReadiness(sourceSelection: RecordingSourceSelection = .defaultSelection) async -> PermissionReadinessSnapshot {
         logger.notice("evaluateStartReadiness begin")
         var repairActions: [PermissionRepairAction] = []
 
-        let screenWasReady = CGPreflightScreenCaptureAccess()
-        logger.notice("screen preflight ready=\(screenWasReady, privacy: .public)")
-        if !screenWasReady {
-            let grantedNow = CGRequestScreenCaptureAccess()
-            logger.notice("screen access requested; grantedNow=\(grantedNow, privacy: .public)")
-            let detail: String
+        if sourceSelection.meetingEnabled {
+            let screenWasReady = CGPreflightScreenCaptureAccess()
+            logger.notice("screen preflight ready=\(screenWasReady, privacy: .public)")
+            if !screenWasReady {
+                let grantedNow = CGRequestScreenCaptureAccess()
+                logger.notice("screen access requested; grantedNow=\(grantedNow, privacy: .public)")
+                let detail: String
 
-            if grantedNow {
-                detail = "Screen Recording was granted just now. Quit and reopen Meetless, then press Retry Recording."
-            } else {
-                detail = "Allow Screen Recording for Meetless in System Settings, then quit and reopen the app."
-            }
+                if grantedNow {
+                    detail = "Screen Recording was granted just now. Quit and reopen Meetless, then press Retry Recording."
+                } else {
+                    detail = "Allow Screen Recording for Meetless in System Settings, then quit and reopen the app."
+                }
 
-            repairActions.append(
-                PermissionRepairAction(
-                    kind: .screenRecording,
-                    title: "Open Screen Recording Settings",
-                    detail: detail,
-                    url: RecordingPermissionKind.screenRecording.settingsURL,
-                    relaunchRequired: true
+                repairActions.append(
+                    PermissionRepairAction(
+                        kind: .screenRecording,
+                        title: "Open Screen Recording Settings",
+                        detail: detail,
+                        url: RecordingPermissionKind.screenRecording.settingsURL,
+                        relaunchRequired: true
+                    )
                 )
-            )
+            }
         }
 
-        let microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-        logger.notice("microphone authorization status raw=\(microphoneStatus.rawValue, privacy: .public)")
-        switch microphoneStatus {
-        case .authorized:
-            break
-        case .notDetermined:
-            let granted = await AVCaptureDevice.requestAccess(for: .audio)
-            logger.notice("microphone access requested; granted=\(granted, privacy: .public)")
-            if !granted {
+        if sourceSelection.meEnabled {
+            let microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+            logger.notice("microphone authorization status raw=\(microphoneStatus.rawValue, privacy: .public)")
+            switch microphoneStatus {
+            case .authorized:
+                break
+            case .notDetermined:
+                let granted = await AVCaptureDevice.requestAccess(for: .audio)
+                logger.notice("microphone access requested; granted=\(granted, privacy: .public)")
+                if !granted {
+                    repairActions.append(
+                        PermissionRepairAction(
+                            kind: .microphone,
+                            title: "Open Microphone Settings",
+                            detail: "Allow microphone access for Meetless in System Settings, then press Retry Recording.",
+                            url: RecordingPermissionKind.microphone.settingsURL,
+                            relaunchRequired: false
+                        )
+                    )
+                }
+            case .denied:
                 repairActions.append(
                     PermissionRepairAction(
                         kind: .microphone,
@@ -95,37 +109,27 @@ struct RecordingPermissionGate {
                         relaunchRequired: false
                     )
                 )
+            case .restricted:
+                repairActions.append(
+                    PermissionRepairAction(
+                        kind: .microphone,
+                        title: "Open Microphone Settings",
+                        detail: "Microphone access is restricted on this Mac. Lift the restriction, then press Retry Recording.",
+                        url: RecordingPermissionKind.microphone.settingsURL,
+                        relaunchRequired: false
+                    )
+                )
+            @unknown default:
+                repairActions.append(
+                    PermissionRepairAction(
+                        kind: .microphone,
+                        title: "Open Microphone Settings",
+                        detail: "Microphone access could not be confirmed. Check System Settings, then press Retry Recording.",
+                        url: RecordingPermissionKind.microphone.settingsURL,
+                        relaunchRequired: false
+                    )
+                )
             }
-        case .denied:
-            repairActions.append(
-                PermissionRepairAction(
-                    kind: .microphone,
-                    title: "Open Microphone Settings",
-                    detail: "Allow microphone access for Meetless in System Settings, then press Retry Recording.",
-                    url: RecordingPermissionKind.microphone.settingsURL,
-                    relaunchRequired: false
-                )
-            )
-        case .restricted:
-            repairActions.append(
-                PermissionRepairAction(
-                    kind: .microphone,
-                    title: "Open Microphone Settings",
-                    detail: "Microphone access is restricted on this Mac. Lift the restriction, then press Retry Recording.",
-                    url: RecordingPermissionKind.microphone.settingsURL,
-                    relaunchRequired: false
-                )
-            )
-        @unknown default:
-            repairActions.append(
-                PermissionRepairAction(
-                    kind: .microphone,
-                    title: "Open Microphone Settings",
-                    detail: "Microphone access could not be confirmed. Check System Settings, then press Retry Recording.",
-                    url: RecordingPermissionKind.microphone.settingsURL,
-                    relaunchRequired: false
-                )
-            )
         }
 
         logger.notice("evaluateStartReadiness completed; repairCount=\(repairActions.count, privacy: .public)")

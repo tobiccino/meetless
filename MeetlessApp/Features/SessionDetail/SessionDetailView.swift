@@ -111,7 +111,7 @@ final class SessionDetailViewModel: ObservableObject {
 
     var compactSourceHealthItems: [SourceHealthItem] {
         let nonReadyItems = sourceStatuses
-            .filter { $0.state != .ready }
+            .filter { $0.state != .ready && $0.state != .disabled }
             .enumerated()
             .map { index, status in
                 Self.compactSourceHealthItem(for: status, index: index)
@@ -125,12 +125,13 @@ final class SessionDetailViewModel: ObservableObject {
             return []
         }
 
+        let activeInputCount = sourceStatuses.filter { $0.state != .disabled }.count
         return [
             SourceHealthItem(
                 id: "inputs-ready",
                 state: .ready,
                 title: "Inputs ready",
-                message: "\(sourceStatuses.count) saved input\(sourceStatuses.count == 1 ? "" : "s") completed without warning."
+                message: "\(activeInputCount) saved input\(activeInputCount == 1 ? "" : "s") completed without warning."
             )
         ]
     }
@@ -316,13 +317,16 @@ final class SessionDetailViewModel: ObservableObject {
         let title: String
         let message: String
 
-        switch status.state {
-        case .ready:
-            title = "Input ready"
-            message = "Saved without warning."
-        case .blocked:
-            title = "Input blocked"
-            message = "One saved input was unavailable during recording."
+            switch status.state {
+            case .ready:
+                title = "Input ready"
+                message = "Saved without warning."
+            case .disabled:
+                title = "Input disabled"
+                message = "This input was turned off for the recording."
+            case .blocked:
+                title = "Input blocked"
+                message = "One saved input was unavailable during recording."
         case .monitoring:
             title = "Input needs review"
             message = "One saved input reported a recoverable capture warning."
@@ -897,6 +901,8 @@ struct SessionDetailView: View {
         switch state {
         case .ready:
             return MeetlessDesignTokens.Colors.successGreen
+        case .disabled:
+            return MeetlessDesignTokens.Colors.tertiaryText
         case .blocked:
             return MeetlessDesignTokens.Colors.warningAmber
         case .monitoring:

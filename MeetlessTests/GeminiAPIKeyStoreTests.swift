@@ -13,6 +13,7 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(store.transcriptOutputLanguage, .english)
         XCTAssertEqual(store.transcriptTranslationProvider, .gemini)
         XCTAssertEqual(store.transcriptTranslationDomain, .general)
+        XCTAssertTrue(store.customTranslationPromptTemplate.contains("{{transcript}}"))
         XCTAssertEqual(store.translationModel(for: .gemini), "gemini-2.5-flash")
         XCTAssertEqual(store.translationModel(for: .openAI), "gpt-5.4-mini")
         XCTAssertEqual(store.translationModel(for: .googleTranslate), "nmt")
@@ -32,11 +33,22 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(reopenedStore.transcriptionModelID, "small")
     }
 
+    func testTranscriptionSettingsPersistsAutoDetectLanguage() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+
+        store.transcriptionLanguage = .autoDetect
+
+        let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        XCTAssertEqual(reopenedStore.transcriptionLanguage, .autoDetect)
+        XCTAssertEqual(reopenedStore.transcriptionLanguage.whisperCode, "auto")
+    }
+
     func testTranscriptionSettingsFallsBackToEnglishForInvalidStoredValue() throws {
         let userDefaults = try makeIsolatedUserDefaults()
-        userDefaults.set("fr", forKey: "meetless.transcriptionLanguage")
+        userDefaults.set("xx-invalid", forKey: "meetless.transcriptionLanguage")
         userDefaults.set("unknown-model", forKey: "meetless.transcriptionModelID")
-        userDefaults.set("fr", forKey: "meetless.transcriptOutputLanguage")
+        userDefaults.set("xx-invalid", forKey: "meetless.transcriptOutputLanguage")
         userDefaults.set("anthropic", forKey: "meetless.transcriptTranslationProvider")
         userDefaults.set("unknown-domain", forKey: "meetless.transcriptTranslation.domain")
         userDefaults.set("", forKey: "meetless.transcriptTranslation.gemini.model")
@@ -86,6 +98,30 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(reopenedStore.translationBaseURL(for: .googleTranslate).absoluteString, "https://translation.test")
     }
 
+    func testRecordingSourceSelectionDefaultsToBothSourcesAndPersistsChoice() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsRecordingSourceSelectionStore(userDefaults: userDefaults)
+
+        XCTAssertEqual(store.recordingSourceSelection, .defaultSelection)
+
+        store.recordingSourceSelection = RecordingSourceSelection(meetingEnabled: true, meEnabled: false)
+
+        let reopenedStore = UserDefaultsRecordingSourceSelectionStore(userDefaults: userDefaults)
+        XCTAssertEqual(
+            reopenedStore.recordingSourceSelection,
+            RecordingSourceSelection(meetingEnabled: true, meEnabled: false)
+        )
+    }
+
+    func testRecordingSourceSelectionNormalizesAllOffState() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        userDefaults.set(false, forKey: "meetless.recordingSource.meeting.enabled")
+        userDefaults.set(false, forKey: "meetless.recordingSource.me.enabled")
+        let store = UserDefaultsRecordingSourceSelectionStore(userDefaults: userDefaults)
+
+        XCTAssertEqual(store.recordingSourceSelection, .defaultSelection)
+    }
+
     func testGeminiTranslationProviderExposesMoreModelPresets() {
         let presets = TranscriptTranslationProvider.gemini.modelPresets
         let presetIDs = presets.map(\.id)
@@ -132,6 +168,28 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
         XCTAssertEqual(viewModel.translationModel, "gemini-custom-preview")
     }
 
+    @MainActor
+    func testSettingsViewModelValidatesAndPreviewsCustomTranslationPrompt() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let settingsStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            transcriptionSettingsStore: settingsStore
+        )
+
+        viewModel.transcriptTranslationDomain = .customPrompt
+        viewModel.customTranslationPromptTemplate = "Translate {{transcript}} to {{target_language}}."
+        XCTAssertEqual(
+            viewModel.customTranslationPromptValidationMessage,
+            "Missing required placeholders: {{source_language}}"
+        )
+
+        viewModel.customTranslationPromptTemplate = "From {{source_language}} to {{target_language}}: {{transcript}}"
+        XCTAssertNil(viewModel.customTranslationPromptValidationMessage)
+        XCTAssertEqual(viewModel.translationPromptPreview, "From Source language to Output language: [meeting transcript text]")
+        XCTAssertEqual(settingsStore.customTranslationPromptTemplate, "From {{source_language}} to {{target_language}}: {{transcript}}")
+    }
+
     func testTranscriptionSettingsPersistsTranslationContextDomain() throws {
         let userDefaults = try makeIsolatedUserDefaults()
         let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
@@ -140,6 +198,42 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
 
         let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
         XCTAssertEqual(reopenedStore.transcriptTranslationDomain, .informationTechnology)
+    }
+
+    func testTranscriptionSettingsPersistsCustomPromptTemplate() throws {
+        let userDefaults = try makeIsolatedUserDefaults()
+        let store = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        let template = "Translate {{transcript}} from {{source_language}} to {{target_language}}."
+
+        store.transcriptTranslationDomain = .customPrompt
+        store.customTranslationPromptTemplate = template
+
+        let reopenedStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
+        XCTAssertEqual(reopenedStore.transcriptTranslationDomain, .customPrompt)
+        XCTAssertEqual(reopenedStore.customTranslationPromptTemplate, template)
+    }
+
+    func testExpandedLanguageCatalogsIncludeAutoDetectAndMoreOutputLanguages() {
+        XCTAssertTrue(TranscriptionLanguage.allCases.contains(.autoDetect))
+        XCTAssertGreaterThan(TranscriptionLanguage.allCases.count, 90)
+        XCTAssertFalse(TranscriptOutputLanguage.allCases.contains { $0.rawValue == "auto" })
+        XCTAssertGreaterThan(TranscriptOutputLanguage.allCases.count, 90)
+        XCTAssertEqual(TranscriptOutputLanguage(rawValue: "fr").displayName, "French")
+    }
+
+    func testLanguageCatalogsAreAlphabetizedForDropdowns() {
+        XCTAssertEqual(TranscriptionLanguage.allCases.first, .autoDetect)
+        let transcriptionNames = TranscriptionLanguage.allCases.dropFirst().map(\.displayName)
+        XCTAssertEqual(
+            transcriptionNames,
+            transcriptionNames.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        )
+
+        let outputNames = TranscriptOutputLanguage.allCases.map(\.displayName)
+        XCTAssertEqual(
+            outputNames,
+            outputNames.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        )
     }
 
     func testWhisperBridgeDefaultsToMultilingualBaseModel() {

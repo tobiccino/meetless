@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added Meeting/Me recording lane toggles so each saved recording can capture either or both audio sources.
+- Added custom transcript translation prompt templates with required placeholders, live validation, and prompt-writing guidance for LLM providers.
+- Expanded transcription and transcript output language selectors into alphabetized dropdown catalogs, including Auto Detect for transcription.
+- Filtered protected transcript markers (`Bắt đầu`, `Kết thúc`) before translation, display, and saved transcript snapshots.
 - Added Korean transcription support by switching the bundled Whisper model to the multilingual `ggml-base.bin` model.
 - Added selectable local Whisper transcription model presets with download, install, remove, smoke-test, and fallback handling.
 - Added richer Whisper model details in Settings, including storage footprint, relative CPU/RAM cost, multilingual or English-only support, quantized status, and recommended use.

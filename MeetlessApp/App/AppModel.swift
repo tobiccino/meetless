@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
         openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
         googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring = KeychainGoogleTranslateAPIKeyStore(),
         transcriptionSettingsStore: any TranscriptionSettingsStoring = UserDefaultsTranscriptionSettingsStore(),
+        recordingSourceSelectionStore: any RecordingSourceSelectionStoring = UserDefaultsRecordingSourceSelectionStore(),
         geminiSessionNotesOrchestrator: (any GeminiSessionNotesOrchestrating)? = nil
     ) {
         self.sessionRepository = sessionRepository
@@ -45,7 +46,8 @@ final class AppModel: ObservableObject {
                     openAIAPIKeyStore: openAIAPIKeyStore,
                     googleTranslateAPIKeyStore: googleTranslateAPIKeyStore,
                     transcriptionSettingsStore: transcriptionSettingsStore
-                )
+                ),
+            sourceSelectionStore: recordingSourceSelectionStore
         )
 
         Task {
@@ -217,6 +219,7 @@ protocol TranscriptionSettingsStoring: AnyObject {
     var transcriptOutputLanguage: TranscriptOutputLanguage { get set }
     var transcriptTranslationProvider: TranscriptTranslationProvider { get set }
     var transcriptTranslationDomain: TranscriptTranslationDomain { get set }
+    var customTranslationPromptTemplate: String { get set }
     func translationModel(for provider: TranscriptTranslationProvider) -> String
     func setTranslationModel(_ model: String, for provider: TranscriptTranslationProvider)
     func translationBaseURL(for provider: TranscriptTranslationProvider) -> URL
@@ -230,6 +233,7 @@ final class UserDefaultsTranscriptionSettingsStore: TranscriptionSettingsStoring
     private let outputLanguageKey: String
     private let providerKey: String
     private let translationDomainKey: String
+    private let customPromptTemplateKey: String
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -237,7 +241,8 @@ final class UserDefaultsTranscriptionSettingsStore: TranscriptionSettingsStoring
         transcriptionModelKey: String = "meetless.transcriptionModelID",
         outputLanguageKey: String = "meetless.transcriptOutputLanguage",
         providerKey: String = "meetless.transcriptTranslationProvider",
-        translationDomainKey: String = "meetless.transcriptTranslation.domain"
+        translationDomainKey: String = "meetless.transcriptTranslation.domain",
+        customPromptTemplateKey: String = "meetless.transcriptTranslation.customPromptTemplate"
     ) {
         self.userDefaults = userDefaults
         self.languageKey = languageKey
@@ -245,6 +250,7 @@ final class UserDefaultsTranscriptionSettingsStore: TranscriptionSettingsStoring
         self.outputLanguageKey = outputLanguageKey
         self.providerKey = providerKey
         self.translationDomainKey = translationDomainKey
+        self.customPromptTemplateKey = customPromptTemplateKey
     }
 
     var transcriptionLanguage: TranscriptionLanguage {
@@ -290,6 +296,15 @@ final class UserDefaultsTranscriptionSettingsStore: TranscriptionSettingsStoring
         }
         set {
             userDefaults.set(newValue.rawValue, forKey: translationDomainKey)
+        }
+    }
+
+    var customTranslationPromptTemplate: String {
+        get {
+            TranscriptPromptTemplate.normalizedTemplate(userDefaults.string(forKey: customPromptTemplateKey))
+        }
+        set {
+            userDefaults.set(newValue, forKey: customPromptTemplateKey)
         }
     }
 
@@ -900,6 +915,12 @@ final class GeminiSettingsViewModel: ObservableObject {
             transcriptionSettingsStore.transcriptTranslationDomain = transcriptTranslationDomain
         }
     }
+    @Published var customTranslationPromptTemplate: String {
+        didSet {
+            guard customTranslationPromptTemplate != oldValue else { return }
+            transcriptionSettingsStore.customTranslationPromptTemplate = customTranslationPromptTemplate
+        }
+    }
     @Published var translationModel: String {
         didSet {
             guard translationModel != oldValue else { return }
@@ -944,6 +965,7 @@ final class GeminiSettingsViewModel: ObservableObject {
         let provider = transcriptionSettingsStore.transcriptTranslationProvider
         self.transcriptTranslationProvider = provider
         self.transcriptTranslationDomain = transcriptionSettingsStore.transcriptTranslationDomain
+        self.customTranslationPromptTemplate = transcriptionSettingsStore.customTranslationPromptTemplate
         self.translationModel = transcriptionSettingsStore.translationModel(for: provider)
         self.translationBaseURL = transcriptionSettingsStore.translationBaseURL(for: provider).absoluteString
         refreshTranscriptionModelStatuses()
@@ -980,8 +1002,24 @@ final class GeminiSettingsViewModel: ObservableObject {
 
     var translationPromptPreview: String {
         TranscriptTranslationService.previewPrompt(
-            context: TranscriptTranslationContext(domain: transcriptTranslationDomain)
+            context: TranscriptTranslationContext(
+                domain: transcriptTranslationDomain,
+                customPromptTemplate: customTranslationPromptTemplate
+            )
         )
+    }
+
+    var isCustomTranslationPromptSelected: Bool {
+        transcriptTranslationDomain == .customPrompt
+    }
+
+    var customTranslationPromptValidationMessage: String? {
+        guard isCustomTranslationPromptSelected else { return nil }
+        let missingPlaceholders = TranscriptPromptTemplate.missingPlaceholders(
+            in: TranscriptPromptTemplate.normalizedTemplate(customTranslationPromptTemplate)
+        )
+        guard !missingPlaceholders.isEmpty else { return nil }
+        return "Missing required placeholders: \(missingPlaceholders.joined(separator: ", "))"
     }
 
     var translationModelPresets: [TranscriptTranslationModelPreset] {
@@ -1019,6 +1057,10 @@ final class GeminiSettingsViewModel: ObservableObject {
         let storedDomain = transcriptionSettingsStore.transcriptTranslationDomain
         if transcriptTranslationDomain != storedDomain {
             transcriptTranslationDomain = storedDomain
+        }
+        let storedCustomPromptTemplate = transcriptionSettingsStore.customTranslationPromptTemplate
+        if customTranslationPromptTemplate != storedCustomPromptTemplate {
+            customTranslationPromptTemplate = storedCustomPromptTemplate
         }
 
         do {

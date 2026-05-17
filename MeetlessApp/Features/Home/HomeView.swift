@@ -40,6 +40,8 @@ struct HomeView: View {
 
             recordButton
 
+            sourceToggles
+
             localStatusRows
 
             Spacer(minLength: 28)
@@ -57,6 +59,33 @@ struct HomeView: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
         .disabled(recordingViewModel.isBusy)
+    }
+
+    private var sourceToggles: some View {
+        HStack(spacing: 18) {
+            Toggle(
+                "Meeting",
+                isOn: Binding(
+                    get: { recordingViewModel.meetingLaneEnabled },
+                    set: { recordingViewModel.setMeetingLaneEnabled($0) }
+                )
+            )
+            .disabled(recordingViewModel.isSourceSelectionLocked || !recordingViewModel.meLaneEnabled)
+
+            Toggle(
+                "Me",
+                isOn: Binding(
+                    get: { recordingViewModel.meLaneEnabled },
+                    set: { recordingViewModel.setMeLaneEnabled($0) }
+                )
+            )
+            .disabled(recordingViewModel.isSourceSelectionLocked || !recordingViewModel.meetingLaneEnabled)
+        }
+        .toggleStyle(.switch)
+        .font(MeetlessDesignTokens.Typography.body)
+        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+        .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+        .accessibilityElement(children: .contain)
     }
 
     private var localStatusRows: some View {

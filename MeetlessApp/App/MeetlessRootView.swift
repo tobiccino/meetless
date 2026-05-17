@@ -313,7 +313,7 @@ private struct SettingsView: View {
                     Text(language.displayName).tag(language)
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .frame(maxWidth: 320)
 
             VStack(alignment: .leading, spacing: 10) {
@@ -479,8 +479,8 @@ private struct SettingsView: View {
                     Text(language.displayName).tag(language)
                 }
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 440)
+            .pickerStyle(.menu)
+            .frame(maxWidth: 320, alignment: .leading)
 
             Picker("Translation provider", selection: $viewModel.transcriptTranslationProvider) {
                 ForEach(TranscriptTranslationProvider.allCases) { provider in
@@ -504,6 +504,40 @@ private struct SettingsView: View {
                     }
                     .pickerStyle(.menu)
                     .frame(maxWidth: 320, alignment: .leading)
+                }
+
+                if viewModel.isCustomTranslationPromptSelected {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Custom prompt")
+                            .font(MeetlessDesignTokens.Typography.caption.weight(.semibold))
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+
+                        TextEditor(text: $viewModel.customTranslationPromptTemplate)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(minHeight: 136, maxHeight: 190)
+                            .padding(6)
+                            .background(MeetlessDesignTokens.Colors.appBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
+                                    .stroke(MeetlessDesignTokens.Colors.separator)
+                            )
+
+                        if let validationMessage = viewModel.customTranslationPromptValidationMessage {
+                            Text(validationMessage)
+                                .font(MeetlessDesignTokens.Typography.caption)
+                                .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                                .foregroundStyle(MeetlessDesignTokens.Colors.recordingRed)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Text("Required placeholders: {{source_language}}, {{target_language}}, {{transcript}}. Ask the model to return only the translated text, avoid summaries, labels, and repeated source text.")
+                            .font(MeetlessDesignTokens.Typography.caption)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {

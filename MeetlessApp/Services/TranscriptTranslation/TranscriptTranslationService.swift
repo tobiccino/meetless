@@ -1,36 +1,41 @@
 import Foundation
 
-enum TranscriptOutputLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
-    case english = "en"
-    case korean = "ko"
-    case vietnamese = "vi"
+struct TranscriptOutputLanguage: RawRepresentable, CaseIterable, Identifiable, Codable, Sendable, Equatable, Hashable {
+    let rawValue: String
+    let displayName: String
 
     var id: String { rawValue }
 
-    var displayName: String {
-        switch self {
-        case .english:
-            return "English"
-        case .korean:
-            return "Korean"
-        case .vietnamese:
-            return "Vietnamese"
-        }
-    }
-
+    static let english = TranscriptOutputLanguage(rawValue: "en", displayName: "English")
+    static let korean = TranscriptOutputLanguage(rawValue: "ko", displayName: "Korean")
+    static let vietnamese = TranscriptOutputLanguage(rawValue: "vi", displayName: "Vietnamese")
     static let defaultLanguage: TranscriptOutputLanguage = .english
 
+    static let allCases: [TranscriptOutputLanguage] = TranscriptionLanguage.allCases
+        .filter { !$0.isAutoDetect }
+        .map { TranscriptOutputLanguage(rawValue: $0.rawValue, displayName: $0.displayName) }
+        .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+
+    init(rawValue: String) {
+        self = Self.allCases.first { $0.rawValue == rawValue } ?? Self.defaultLanguage
+    }
+
+    init(rawValue: String, displayName: String) {
+        self.rawValue = rawValue
+        self.displayName = displayName
+    }
+
     init(storedValue: String?) {
-        self = storedValue.flatMap(Self.init(rawValue:)) ?? Self.defaultLanguage
+        self = storedValue.map(Self.init(rawValue:)) ?? Self.defaultLanguage
     }
 
     init(transcriptionLanguage: TranscriptionLanguage) {
-        switch transcriptionLanguage {
-        case .english:
-            self = .english
-        case .korean:
-            self = .korean
+        guard !transcriptionLanguage.isAutoDetect else {
+            self = Self.defaultLanguage
+            return
         }
+
+        self = Self(rawValue: transcriptionLanguage.rawValue)
     }
 }
 
@@ -165,6 +170,7 @@ enum TranscriptTranslationDomain: String, CaseIterable, Identifiable, Codable, S
     case salesMarketing
     case engineering
     case customerSupport
+    case customPrompt
 
     var id: String { rawValue }
 
@@ -190,6 +196,8 @@ enum TranscriptTranslationDomain: String, CaseIterable, Identifiable, Codable, S
             return "Engineering"
         case .customerSupport:
             return "Customer Support"
+        case .customPrompt:
+            return "Custom Prompt"
         }
     }
 
@@ -215,6 +223,8 @@ enum TranscriptTranslationDomain: String, CaseIterable, Identifiable, Codable, S
             return "Prefer accurate engineering, product design, manufacturing, systems, quality, and technical operations terminology."
         case .customerSupport:
             return "Prefer accurate support, incident, troubleshooting, service-level, escalation, and customer-experience terminology."
+        case .customPrompt:
+            return ""
         }
     }
 
@@ -227,15 +237,63 @@ enum TranscriptTranslationDomain: String, CaseIterable, Identifiable, Codable, S
 
 struct TranscriptTranslationContext: Equatable, Sendable {
     let domain: TranscriptTranslationDomain
+    let customPromptTemplate: String
 
     static let defaultContext = TranscriptTranslationContext(
         domain: .defaultDomain
     )
 
     init(
-        domain: TranscriptTranslationDomain = .defaultDomain
+        domain: TranscriptTranslationDomain = .defaultDomain,
+        customPromptTemplate: String = TranscriptPromptTemplate.defaultTemplate
     ) {
         self.domain = domain
+        self.customPromptTemplate = customPromptTemplate
+    }
+}
+
+enum TranscriptPromptTemplate {
+    static let sourceLanguagePlaceholder = "{{source_language}}"
+    static let targetLanguagePlaceholder = "{{target_language}}"
+    static let transcriptPlaceholder = "{{transcript}}"
+    static let requiredPlaceholders = [
+        sourceLanguagePlaceholder,
+        targetLanguagePlaceholder,
+        transcriptPlaceholder
+    ]
+
+    static let defaultTemplate = """
+    Translate this meeting transcript window from {{source_language}} to {{target_language}}.
+    Return only the translated text. Preserve speaker meaning, numbers, names, and punctuation. Do not summarize, explain, add labels, or include the original text.
+
+    Transcript:
+    {{transcript}}
+    """
+
+    static func normalizedTemplate(_ template: String?) -> String {
+        let trimmed = template?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? defaultTemplate : trimmed
+    }
+
+    static func missingPlaceholders(in template: String) -> [String] {
+        requiredPlaceholders.filter { !template.contains($0) }
+    }
+
+    static func isValid(_ template: String) -> Bool {
+        missingPlaceholders(in: template).isEmpty
+    }
+
+    static func render(
+        template: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        transcript: String
+    ) -> String? {
+        guard isValid(template) else { return nil }
+        return template
+            .replacingOccurrences(of: sourceLanguagePlaceholder, with: sourceLanguage)
+            .replacingOccurrences(of: targetLanguagePlaceholder, with: targetLanguage)
+            .replacingOccurrences(of: transcriptPlaceholder, with: transcript)
     }
 }
 
@@ -310,12 +368,12 @@ struct TranscriptTranslationService: TranscriptTranslating {
         sourceLanguage: String = "Source language",
         targetLanguage: String = "Output language"
     ) -> String {
-        prompt(
+        (try? prompt(
             text: "[meeting transcript text]",
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
             context: context
-        )
+        )) ?? "Custom prompt is missing required placeholders: \(TranscriptPromptTemplate.requiredPlaceholders.joined(separator: ", "))."
     }
 
     init(
@@ -366,7 +424,7 @@ struct TranscriptTranslationService: TranscriptTranslating {
                     role: "user",
                     parts: [
                         GeminiTranslationPart(
-                            text: Self.prompt(
+                            text: try Self.prompt(
                                 text: text,
                                 sourceLanguage: request.sourceLanguage.displayName,
                                 targetLanguage: request.targetLanguage.displayName,
@@ -402,7 +460,7 @@ struct TranscriptTranslationService: TranscriptTranslating {
             messages: [
                 OpenAIChatMessage(
                     role: "user",
-                    content: Self.prompt(
+                    content: try Self.prompt(
                         text: text,
                         sourceLanguage: request.sourceLanguage.displayName,
                         targetLanguage: request.targetLanguage.displayName,
@@ -437,7 +495,7 @@ struct TranscriptTranslationService: TranscriptTranslating {
         let url = try googleTranslateURL(
             from: request.providerConfig.baseURL,
             text: text,
-            sourceLanguage: request.sourceLanguage.whisperCode,
+            sourceLanguage: request.sourceLanguage.isAutoDetect ? nil : request.sourceLanguage.whisperCode,
             targetLanguage: request.targetLanguage.rawValue,
             apiKey: apiKey
         )
@@ -579,7 +637,7 @@ struct TranscriptTranslationService: TranscriptTranslating {
     private func googleTranslateURL(
         from baseURL: URL,
         text: String,
-        sourceLanguage: String,
+        sourceLanguage: String?,
         targetLanguage: String,
         apiKey: String
     ) throws -> URL {
@@ -591,11 +649,13 @@ struct TranscriptTranslationService: TranscriptTranslating {
         var queryItems = components.queryItems ?? []
         queryItems.append(contentsOf: [
             URLQueryItem(name: "q", value: text),
-            URLQueryItem(name: "source", value: sourceLanguage),
             URLQueryItem(name: "target", value: targetLanguage),
             URLQueryItem(name: "format", value: "text"),
             URLQueryItem(name: "key", value: apiKey)
         ])
+        if let sourceLanguage {
+            queryItems.insert(URLQueryItem(name: "source", value: sourceLanguage), at: 1)
+        }
         components.queryItems = queryItems
 
         guard let url = components.url else {
@@ -622,7 +682,20 @@ struct TranscriptTranslationService: TranscriptTranslating {
         sourceLanguage: String,
         targetLanguage: String,
         context: TranscriptTranslationContext
-    ) -> String {
+    ) throws -> String {
+        if context.domain == .customPrompt {
+            guard let renderedPrompt = TranscriptPromptTemplate.render(
+                template: TranscriptPromptTemplate.normalizedTemplate(context.customPromptTemplate),
+                sourceLanguage: sourceLanguage,
+                targetLanguage: targetLanguage,
+                transcript: text
+            ) else {
+                throw TranscriptTranslationError.invalidRequest
+            }
+
+            return renderedPrompt
+        }
+
         var promptLines = [
             "Translate this meeting transcript window from \(sourceLanguage) to \(targetLanguage).",
             "Return only the translated text. Preserve speaker meaning, numbers, names, and punctuation. Do not summarize, explain, add labels, or include the original text.",
