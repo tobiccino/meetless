@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "feature_slug": "google-translate-provider",
+  "feature_slug": "provider-key-test-dual-transcript-display",
   "mode": "standard",
   "active_skill": "khuym:reviewing",
   "phase": "review-complete",
@@ -16,12 +16,12 @@
   "active_workers": [],
   "blockers": [],
   "focus": "idle",
-  "summary": "Transcript translation now supports Google Translate Basic v2 as a curated provider with separate Keychain-backed API key storage and Settings UI that hides LLM-only prompt/model controls when selected.",
-  "next_action": "Manual UAT: relaunch the rebuilt app, open Settings, choose Google Translate as the translation provider, save a Cloud Translation API key, and verify a recording translates when output language differs from the transcription language.",
+  "summary": "Settings now supports non-persisting Test Key actions for Gemini, OpenAI, and Google Translate, and transcript rows show saved translated text plus the original transcript when translation succeeds.",
+  "next_action": "Manual UAT: open Settings, test typed and saved provider API keys, then record or reopen a translated session and verify the translated row shows the original transcript below it.",
   "review_uat": {
     "automated": {
-      "focused_tests": "passed: Google Translate provider/settings tests, 39 tests, 0 failures",
-      "full_suite": "passed: 88 tests, 0 failures",
+      "focused_tests": "passed: provider key test/settings/session transcript tests, 79 tests, 0 failures",
+      "full_suite": "passed: 113 tests, 0 failures",
       "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-"
     },
     "manual": "pending"
@@ -34,5 +34,5 @@
     "learnings_file": "",
     "critical_promotions": 0
   },
-  "last_updated": "2026-05-16T16:40:00+07:00"
+  "last_updated": "2026-05-17T23:28:00+07:00"
 }

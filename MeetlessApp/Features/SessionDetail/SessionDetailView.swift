@@ -27,6 +27,7 @@ final class SessionDetailViewModel: ObservableObject {
         let source: RecordingSourceKind
         let timeRangeText: String
         let text: String
+        let originalText: String?
     }
 
     struct GeneratedNotesDisplay: Equatable {
@@ -172,7 +173,7 @@ final class SessionDetailViewModel: ObservableObject {
         title = detail.title
         subtitle = detail.isIncomplete
             ? "This session was saved as incomplete. The transcript below is the display snapshot captured during recording."
-            : "This read-only detail shows the persisted display transcript snapshot and saved metadata for the local session."
+            : "This read-only detail shows the persisted transcript snapshot and saved metadata for the local session."
         metadataItems = [
             MetadataItem(id: "state", label: "Saved session state", value: detail.isIncomplete ? "Incomplete" : "Completed"),
             MetadataItem(id: "started", label: "Started", value: Self.dateTimeFormatter.string(from: detail.startedAt)),
@@ -186,7 +187,8 @@ final class SessionDetailViewModel: ObservableObject {
                 id: chunk.id,
                 source: chunk.source,
                 timeRangeText: Self.formattedTimeRange(for: chunk),
-                text: chunk.text
+                text: chunk.text,
+                originalText: Self.originalTextDisplay(for: chunk)
             )
         }
         sourceStatuses = detail.sourceStatuses
@@ -269,6 +271,16 @@ final class SessionDetailViewModel: ObservableObject {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return String(format: "%01d:%02d", minutes, seconds)
+    }
+
+    private static func originalTextDisplay(for chunk: CommittedTranscriptChunk) -> String? {
+        let originalText = chunk.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let displayText = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !originalText.isEmpty, originalText != displayText else {
+            return nil
+        }
+
+        return originalText
     }
 
     private static func compactNoticeItem(for notice: SavedSessionNotice) -> NoticeItem {
@@ -671,19 +683,40 @@ struct SessionDetailView: View {
                     .frame(width: 76, alignment: .leading)
                     .padding(.top, 1)
 
-                Text(row.text)
-                    .font(MeetlessDesignTokens.Typography.body)
-                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.text)
+                        .font(MeetlessDesignTokens.Typography.body)
+                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                        .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let originalText = row.originalText {
+                        Text("Original: \(originalText)")
+                            .font(MeetlessDesignTokens.Typography.caption)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.timeRangeText), \(row.text)")
+        .accessibilityLabel(transcriptRowAccessibilityText(row))
+    }
+
+    private func transcriptRowAccessibilityText(_ row: SessionDetailViewModel.TranscriptRow) -> String {
+        if let originalText = row.originalText {
+            return "\(row.timeRangeText), \(row.text), original: \(originalText)"
+        }
+
+        return "\(row.timeRangeText), \(row.text)"
     }
 
     private var metadataRail: some View {

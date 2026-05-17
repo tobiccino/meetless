@@ -178,6 +178,7 @@ struct TranscriptDisplayRow: Identifiable, Sendable {
     let id: String
     let source: RecordingSourceKind
     let text: String
+    let originalText: String?
     let startFrameIndex: Int64
     let endFrameIndex: Int64
     let sampleRate: Double
@@ -188,6 +189,7 @@ struct TranscriptDisplayRow: Identifiable, Sendable {
         self.id = chunk.id.uuidString
         self.source = chunk.source
         self.text = chunk.text
+        self.originalText = chunk.originalText
         self.startFrameIndex = chunk.startFrameIndex
         self.endFrameIndex = chunk.endFrameIndex
         self.sampleRate = chunk.sampleRate
@@ -199,6 +201,7 @@ struct TranscriptDisplayRow: Identifiable, Sendable {
         id: String,
         source: RecordingSourceKind,
         text: String,
+        originalText: String? = nil,
         startFrameIndex: Int64,
         endFrameIndex: Int64,
         sampleRate: Double,
@@ -208,6 +211,7 @@ struct TranscriptDisplayRow: Identifiable, Sendable {
         self.id = id
         self.source = source
         self.text = text
+        self.originalText = originalText
         self.startFrameIndex = startFrameIndex
         self.endFrameIndex = endFrameIndex
         self.sampleRate = sampleRate

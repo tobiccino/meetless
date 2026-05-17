@@ -54,7 +54,10 @@ enum MeetlessTestSupport {
         text: String,
         sequenceNumber: Int,
         startFrameIndex: Int64 = 0,
-        endFrameIndex: Int64 = 16_000
+        endFrameIndex: Int64 = 16_000,
+        originalText: String? = nil,
+        translationProvider: TranscriptTranslationProvider? = nil,
+        translationStatus: TranscriptTranslationStatus? = nil
     ) -> CommittedTranscriptChunk {
         CommittedTranscriptChunk(
             id: UUID(),
@@ -63,7 +66,12 @@ enum MeetlessTestSupport {
             startFrameIndex: startFrameIndex,
             endFrameIndex: endFrameIndex,
             sampleRate: 16_000,
-            sequenceNumber: sequenceNumber
+            sequenceNumber: sequenceNumber,
+            originalText: originalText,
+            sourceLanguageCode: originalText == nil ? nil : "en",
+            outputLanguageCode: originalText == nil ? nil : "vi",
+            translationProvider: translationProvider,
+            translationStatus: translationStatus
         )
     }
 

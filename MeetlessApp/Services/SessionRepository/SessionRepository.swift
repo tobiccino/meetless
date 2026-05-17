@@ -246,7 +246,7 @@ private enum SavedSessionNoticeFactory {
                     id: "snapshot-note",
                     severity: .info,
                     title: "Saved snapshot note",
-                    message: "Meetless shows the display transcript snapshot and source markers that were written into this local bundle. Hidden original transcript text may exist for audit/debug when translation was enabled."
+                    message: "Meetless shows the saved transcript snapshot and can include both translated text and the original transcript when translation was enabled."
                 )
             )
         }

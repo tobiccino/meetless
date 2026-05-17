@@ -82,6 +82,16 @@ private struct TranscriptRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
+                    if let originalText {
+                        Text("Original: \(originalText)")
+                            .font(MeetlessDesignTokens.Typography.caption)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
                     if let statusText {
                         Text(statusText)
                             .font(MeetlessDesignTokens.Typography.caption)
@@ -95,7 +105,25 @@ private struct TranscriptRow: View {
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(formattedStartTime), \(row.text)")
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var originalText: String? {
+        let trimmedOriginalText = row.originalText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedText = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOriginalText.isEmpty, trimmedOriginalText != trimmedText else {
+            return nil
+        }
+
+        return trimmedOriginalText
+    }
+
+    private var accessibilityText: String {
+        if let originalText {
+            return "\(formattedStartTime), \(row.text), original: \(originalText)"
+        }
+
+        return "\(formattedStartTime), \(row.text)"
     }
 
     private var formattedStartTime: String {

@@ -499,6 +499,84 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsViewModelTestsTypedGoogleTranslateKeyWithoutSavingIt() async throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainGoogleTranslateAPIKeyStore(keychain: keychain)
+        let tester = FixtureProviderAPIKeyTester(result: .success(()))
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            googleTranslateAPIKeyStore: store,
+            apiKeyTester: tester
+        )
+
+        viewModel.googleTranslateAPIKeyInput = "  google-secret  "
+        await viewModel.testGoogleTranslateAPIKey()
+
+        let requests = await tester.requests
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.provider, .googleTranslate)
+        XCTAssertEqual(request.apiKey, "google-secret")
+        XCTAssertNil(try store.loadAPIKey())
+        XCTAssertEqual(viewModel.googleTranslateKeyTestStatus, .valid("Google Translate API key is valid."))
+        XCTAssertFalse(viewModel.feedbackMessage?.contains("google-secret") ?? false)
+    }
+
+    @MainActor
+    func testSettingsViewModelTestsSavedOpenAIKeyWhenInputIsEmpty() async throws {
+        let keychain = FakeKeychainItemAccessor()
+        let store = KeychainOpenAIAPIKeyStore(keychain: keychain)
+        try store.saveAPIKey("openai-secret")
+        let tester = FixtureProviderAPIKeyTester(result: .success(()))
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            openAIAPIKeyStore: store,
+            apiKeyTester: tester
+        )
+
+        await viewModel.testOpenAIAPIKey()
+
+        let requests = await tester.requests
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.provider, .openAI)
+        XCTAssertEqual(request.apiKey, "openai-secret")
+        XCTAssertEqual(viewModel.openAIKeyTestStatus, .valid("OpenAI API key is valid."))
+        XCTAssertFalse(viewModel.feedbackMessage?.contains("openai-secret") ?? false)
+    }
+
+    @MainActor
+    func testSettingsViewModelMapsInvalidTestKeyToSafeCopy() async throws {
+        let tester = FixtureProviderAPIKeyTester(
+            result: .failure(ProviderAPIKeyTestError.authentication(provider: .gemini, statusCode: 403))
+        )
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            apiKeyTester: tester
+        )
+
+        viewModel.apiKeyInput = "bad-secret"
+        await viewModel.testGeminiAPIKey()
+
+        XCTAssertEqual(viewModel.geminiKeyTestStatus, .invalid("Gemini rejected this API key."))
+        XCTAssertEqual(viewModel.feedbackMessage, "Gemini rejected this API key.")
+        XCTAssertFalse(viewModel.feedbackMessage?.contains("bad-secret") ?? false)
+    }
+
+    @MainActor
+    func testSettingsViewModelRejectsMissingTestKeyBeforeProviderCall() async throws {
+        let tester = FixtureProviderAPIKeyTester(result: .success(()))
+        let viewModel = GeminiSettingsViewModel(
+            apiKeyStore: KeychainGeminiAPIKeyStore(keychain: FakeKeychainItemAccessor()),
+            apiKeyTester: tester
+        )
+
+        await viewModel.testGeminiAPIKey()
+
+        let requests = await tester.requests
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertEqual(viewModel.geminiKeyTestStatus, .invalid("Enter or save a Gemini API key before testing."))
+    }
+
+    @MainActor
     func testSettingsViewModelHidesPromptControlsForGoogleTranslateProvider() throws {
         let userDefaults = try makeIsolatedUserDefaults()
         let settingsStore = UserDefaultsTranscriptionSettingsStore(userDefaults: userDefaults)
@@ -553,6 +631,20 @@ final class GeminiAPIKeyStoreTests: XCTestCase {
             viewModel.keyStatus,
             .error("Keychain could not complete the request. Check macOS access and try again.")
         )
+    }
+}
+
+private actor FixtureProviderAPIKeyTester: ProviderAPIKeyTesting {
+    private let result: Result<Void, Error>
+    private(set) var requests: [ProviderAPIKeyTestRequest] = []
+
+    init(result: Result<Void, Error>) {
+        self.result = result
+    }
+
+    func testAPIKey(_ request: ProviderAPIKeyTestRequest) async throws {
+        requests.append(request)
+        try result.get()
     }
 }
 

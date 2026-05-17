@@ -873,9 +873,39 @@ final class GeminiSettingsViewModel: ObservableObject {
         }
     }
 
+    enum KeyTestStatus: Equatable {
+        case idle
+        case testing
+        case valid(String)
+        case invalid(String)
+        case error(String)
+
+        var isTesting: Bool {
+            if case .testing = self {
+                return true
+            }
+
+            return false
+        }
+
+        var message: String? {
+            switch self {
+            case .idle:
+                return nil
+            case .testing:
+                return "Testing API key..."
+            case .valid(let message), .invalid(let message), .error(let message):
+                return message
+            }
+        }
+    }
+
     @Published private(set) var keyStatus: KeyStatus = .unknown
     @Published private(set) var openAIKeyStatus: KeyStatus = .unknown
     @Published private(set) var googleTranslateKeyStatus: KeyStatus = .unknown
+    @Published private(set) var geminiKeyTestStatus: KeyTestStatus = .idle
+    @Published private(set) var openAIKeyTestStatus: KeyTestStatus = .idle
+    @Published private(set) var googleTranslateKeyTestStatus: KeyTestStatus = .idle
     @Published private(set) var feedbackMessage: String?
     @Published private(set) var transcriptionModelStatuses: [TranscriptionModelStatus] = []
     @Published var transcriptionLanguage: TranscriptionLanguage {
@@ -941,6 +971,7 @@ final class GeminiSettingsViewModel: ObservableObject {
     private let apiKeyStore: any GeminiAPIKeyStoring
     private let openAIAPIKeyStore: any OpenAIAPIKeyStoring
     private let googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring
+    private let apiKeyTester: any ProviderAPIKeyTesting
     private let transcriptionSettingsStore: any TranscriptionSettingsStoring
     private let transcriptionModelLibrary: TranscriptionModelLibrary
     private var modelDownloadProgress: [String: Double] = [:]
@@ -951,12 +982,14 @@ final class GeminiSettingsViewModel: ObservableObject {
         apiKeyStore: any GeminiAPIKeyStoring,
         openAIAPIKeyStore: any OpenAIAPIKeyStoring = KeychainOpenAIAPIKeyStore(),
         googleTranslateAPIKeyStore: any GoogleTranslateAPIKeyStoring = KeychainGoogleTranslateAPIKeyStore(),
+        apiKeyTester: any ProviderAPIKeyTesting = ProviderAPIKeyTestService(),
         transcriptionSettingsStore: any TranscriptionSettingsStoring = UserDefaultsTranscriptionSettingsStore(),
         transcriptionModelLibrary: TranscriptionModelLibrary = TranscriptionModelLibrary()
     ) {
         self.apiKeyStore = apiKeyStore
         self.openAIAPIKeyStore = openAIAPIKeyStore
         self.googleTranslateAPIKeyStore = googleTranslateAPIKeyStore
+        self.apiKeyTester = apiKeyTester
         self.transcriptionSettingsStore = transcriptionSettingsStore
         self.transcriptionModelLibrary = transcriptionModelLibrary
         self.transcriptionLanguage = transcriptionSettingsStore.transcriptionLanguage
@@ -982,6 +1015,18 @@ final class GeminiSettingsViewModel: ObservableObject {
 
     var canSaveGoogleTranslateAPIKey: Bool {
         !googleTranslateAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var canTestGeminiAPIKey: Bool {
+        (canSave || isConfigured) && !geminiKeyTestStatus.isTesting
+    }
+
+    var canTestOpenAIAPIKey: Bool {
+        (canSaveOpenAIAPIKey || isOpenAIConfigured) && !openAIKeyTestStatus.isTesting
+    }
+
+    var canTestGoogleTranslateAPIKey: Bool {
+        (canSaveGoogleTranslateAPIKey || isGoogleTranslateConfigured) && !googleTranslateKeyTestStatus.isTesting
     }
 
     var isConfigured: Bool {
@@ -1174,6 +1219,7 @@ final class GeminiSettingsViewModel: ObservableObject {
             try apiKeyStore.saveAPIKey(trimmedKey)
             apiKeyInput = ""
             keyStatus = .configured
+            geminiKeyTestStatus = .idle
             feedbackMessage = "Gemini API key saved."
         } catch {
             keyStatus = .error(Self.safeMessage(for: error))
@@ -1186,6 +1232,7 @@ final class GeminiSettingsViewModel: ObservableObject {
             try apiKeyStore.deleteAPIKey()
             apiKeyInput = ""
             keyStatus = .notConfigured
+            geminiKeyTestStatus = .idle
             feedbackMessage = "Gemini API key removed."
         } catch {
             keyStatus = .error(Self.safeMessage(for: error))
@@ -1204,6 +1251,7 @@ final class GeminiSettingsViewModel: ObservableObject {
             try openAIAPIKeyStore.saveAPIKey(trimmedKey)
             openAIAPIKeyInput = ""
             openAIKeyStatus = .configured
+            openAIKeyTestStatus = .idle
             feedbackMessage = "OpenAI API key saved."
         } catch {
             openAIKeyStatus = .error(Self.safeOpenAIMessage(for: error))
@@ -1216,6 +1264,7 @@ final class GeminiSettingsViewModel: ObservableObject {
             try openAIAPIKeyStore.deleteAPIKey()
             openAIAPIKeyInput = ""
             openAIKeyStatus = .notConfigured
+            openAIKeyTestStatus = .idle
             feedbackMessage = "OpenAI API key removed."
         } catch {
             openAIKeyStatus = .error(Self.safeOpenAIMessage(for: error))
@@ -1234,6 +1283,7 @@ final class GeminiSettingsViewModel: ObservableObject {
             try googleTranslateAPIKeyStore.saveAPIKey(trimmedKey)
             googleTranslateAPIKeyInput = ""
             googleTranslateKeyStatus = .configured
+            googleTranslateKeyTestStatus = .idle
             feedbackMessage = "Google Translate API key saved."
         } catch {
             googleTranslateKeyStatus = .error(Self.safeGoogleTranslateMessage(for: error))
@@ -1246,11 +1296,42 @@ final class GeminiSettingsViewModel: ObservableObject {
             try googleTranslateAPIKeyStore.deleteAPIKey()
             googleTranslateAPIKeyInput = ""
             googleTranslateKeyStatus = .notConfigured
+            googleTranslateKeyTestStatus = .idle
             feedbackMessage = "Google Translate API key removed."
         } catch {
             googleTranslateKeyStatus = .error(Self.safeGoogleTranslateMessage(for: error))
             feedbackMessage = "The Google Translate API key could not be removed."
         }
+    }
+
+    func testGeminiAPIKey() async {
+        await testAPIKey(
+            provider: .gemini,
+            typedKey: apiKeyInput,
+            savedKeyLoader: apiKeyStore.loadAPIKey,
+            baseURL: TranscriptTranslationProvider.gemini.defaultBaseURL,
+            status: \.geminiKeyTestStatus
+        )
+    }
+
+    func testOpenAIAPIKey() async {
+        await testAPIKey(
+            provider: .openAI,
+            typedKey: openAIAPIKeyInput,
+            savedKeyLoader: openAIAPIKeyStore.loadAPIKey,
+            baseURL: transcriptionSettingsStore.translationBaseURL(for: .openAI),
+            status: \.openAIKeyTestStatus
+        )
+    }
+
+    func testGoogleTranslateAPIKey() async {
+        await testAPIKey(
+            provider: .googleTranslate,
+            typedKey: googleTranslateAPIKeyInput,
+            savedKeyLoader: googleTranslateAPIKeyStore.loadAPIKey,
+            baseURL: TranscriptTranslationProvider.googleTranslate.defaultBaseURL,
+            status: \.googleTranslateKeyTestStatus
+        )
     }
 
     private func refreshTranscriptionModelStatuses() {
@@ -1270,6 +1351,64 @@ final class GeminiSettingsViewModel: ObservableObject {
         let baseURL = transcriptionSettingsStore.translationBaseURL(for: transcriptTranslationProvider).absoluteString
         if translationBaseURL != baseURL {
             translationBaseURL = baseURL
+        }
+    }
+
+    private func testAPIKey(
+        provider: TranscriptTranslationProvider,
+        typedKey: String,
+        savedKeyLoader: () throws -> String?,
+        baseURL: URL,
+        status: ReferenceWritableKeyPath<GeminiSettingsViewModel, KeyTestStatus>
+    ) async {
+        let typedKey = typedKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey: String
+        if !typedKey.isEmpty {
+            apiKey = typedKey
+        } else {
+            do {
+                apiKey = try savedKeyLoader()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            } catch {
+                self[keyPath: status] = .error(Self.safeMessage(for: error, provider: provider))
+                feedbackMessage = "\(provider.displayName) API key could not be tested."
+                return
+            }
+        }
+
+        guard !apiKey.isEmpty else {
+            let message = ProviderAPIKeyTestError.missingAPIKey(provider: provider).safeUserMessage
+            self[keyPath: status] = .invalid(message)
+            feedbackMessage = message
+            return
+        }
+
+        self[keyPath: status] = .testing
+        feedbackMessage = "Testing \(provider.displayName) API key..."
+
+        do {
+            try await apiKeyTester.testAPIKey(
+                ProviderAPIKeyTestRequest(
+                    provider: provider,
+                    apiKey: apiKey,
+                    baseURL: baseURL
+                )
+            )
+            let message = "\(provider.displayName) API key is valid."
+            self[keyPath: status] = .valid(message)
+            feedbackMessage = message
+        } catch let error as ProviderAPIKeyTestError {
+            let message = error.safeUserMessage
+            switch error {
+            case .missingAPIKey, .authentication:
+                self[keyPath: status] = .invalid(message)
+            case .provider, .malformedResponse, .client:
+                self[keyPath: status] = .error(message)
+            }
+            feedbackMessage = message
+        } catch {
+            let message = "Meetless could not test the \(provider.displayName) API key."
+            self[keyPath: status] = .error(message)
+            feedbackMessage = message
         }
     }
 
@@ -1324,5 +1463,16 @@ final class GeminiSettingsViewModel: ObservableObject {
         }
 
         return "Google Translate key settings could not be updated. Try again."
+    }
+
+    private static func safeMessage(for error: Error, provider: TranscriptTranslationProvider) -> String {
+        switch provider {
+        case .gemini:
+            return safeMessage(for: error)
+        case .openAI:
+            return safeOpenAIMessage(for: error)
+        case .googleTranslate:
+            return safeGoogleTranslateMessage(for: error)
+        }
     }
 }

@@ -355,6 +355,195 @@ enum TranscriptTranslationError: Error, Equatable, Sendable {
     }
 }
 
+struct ProviderAPIKeyTestRequest: Equatable, Sendable {
+    let provider: TranscriptTranslationProvider
+    let apiKey: String
+    let baseURL: URL
+}
+
+enum ProviderAPIKeyTestError: Error, Equatable, Sendable {
+    case missingAPIKey(provider: TranscriptTranslationProvider)
+    case authentication(provider: TranscriptTranslationProvider, statusCode: Int)
+    case provider(provider: TranscriptTranslationProvider, statusCode: Int)
+    case malformedResponse(provider: TranscriptTranslationProvider)
+    case client(provider: TranscriptTranslationProvider)
+
+    var safeUserMessage: String {
+        switch self {
+        case .missingAPIKey(let provider):
+            return "Enter or save a \(provider.displayName) API key before testing."
+        case .authentication(let provider, _):
+            return "\(provider.displayName) rejected this API key."
+        case .provider(let provider, _):
+            return "\(provider.displayName) could not validate the key right now."
+        case .malformedResponse(let provider):
+            return "\(provider.displayName) returned a response Meetless could not read."
+        case .client(let provider):
+            return "Meetless could not reach \(provider.displayName). Check your connection and try again."
+        }
+    }
+}
+
+protocol ProviderAPIKeyTesting: Sendable {
+    func testAPIKey(_ request: ProviderAPIKeyTestRequest) async throws
+}
+
+struct ProviderAPIKeyTestService: ProviderAPIKeyTesting {
+    private let transport: any TranscriptTranslationHTTPTransport
+    private let decoder = JSONDecoder()
+
+    init(transport: any TranscriptTranslationHTTPTransport = URLSessionTranscriptTranslationHTTPTransport()) {
+        self.transport = transport
+    }
+
+    func testAPIKey(_ request: ProviderAPIKeyTestRequest) async throws {
+        let apiKey = request.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            throw ProviderAPIKeyTestError.missingAPIKey(provider: request.provider)
+        }
+
+        let httpRequest = try makeHTTPRequest(for: request.provider, apiKey: apiKey, baseURL: request.baseURL)
+        let response: TranscriptTranslationHTTPResponse
+        do {
+            response = try await transport.send(httpRequest)
+        } catch {
+            throw ProviderAPIKeyTestError.client(provider: request.provider)
+        }
+
+        try validate(response: response, provider: request.provider)
+        try parseSuccessResponse(response.body, provider: request.provider)
+    }
+
+    private func makeHTTPRequest(
+        for provider: TranscriptTranslationProvider,
+        apiKey: String,
+        baseURL: URL
+    ) throws -> TranscriptTranslationHTTPRequest {
+        switch provider {
+        case .gemini:
+            return TranscriptTranslationHTTPRequest(
+                method: "GET",
+                url: try keyedURL(Self.geminiModelsURL(from: baseURL), apiKey: apiKey, provider: provider),
+                headers: [:],
+                body: Data()
+            )
+        case .openAI:
+            return TranscriptTranslationHTTPRequest(
+                method: "GET",
+                url: Self.openAIModelsURL(from: baseURL),
+                headers: ["Authorization": "Bearer \(apiKey)"],
+                body: Data()
+            )
+        case .googleTranslate:
+            return TranscriptTranslationHTTPRequest(
+                method: "GET",
+                url: try keyedURL(Self.googleTranslateLanguagesURL(from: baseURL), apiKey: apiKey, provider: provider),
+                headers: [:],
+                body: Data()
+            )
+        }
+    }
+
+    private func validate(response: TranscriptTranslationHTTPResponse, provider: TranscriptTranslationProvider) throws {
+        guard (200..<300).contains(response.statusCode) else {
+            if response.statusCode == 401 || response.statusCode == 403 {
+                throw ProviderAPIKeyTestError.authentication(provider: provider, statusCode: response.statusCode)
+            }
+
+            throw ProviderAPIKeyTestError.provider(provider: provider, statusCode: response.statusCode)
+        }
+    }
+
+    private func parseSuccessResponse(_ data: Data, provider: TranscriptTranslationProvider) throws {
+        do {
+            switch provider {
+            case .gemini:
+                let envelope = try decoder.decode(GeminiModelsEnvelope.self, from: data)
+                guard !envelope.models.isEmpty else {
+                    throw ProviderAPIKeyTestError.malformedResponse(provider: provider)
+                }
+            case .openAI:
+                let envelope = try decoder.decode(OpenAIModelsEnvelope.self, from: data)
+                guard envelope.object == "list" else {
+                    throw ProviderAPIKeyTestError.malformedResponse(provider: provider)
+                }
+            case .googleTranslate:
+                let envelope = try decoder.decode(GoogleTranslateLanguagesEnvelope.self, from: data)
+                guard !envelope.data.languages.isEmpty else {
+                    throw ProviderAPIKeyTestError.malformedResponse(provider: provider)
+                }
+            }
+        } catch let error as ProviderAPIKeyTestError {
+            throw error
+        } catch {
+            throw ProviderAPIKeyTestError.malformedResponse(provider: provider)
+        }
+    }
+
+    private func keyedURL(_ url: URL, apiKey: String, provider: TranscriptTranslationProvider) throws -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw ProviderAPIKeyTestError.client(provider: provider)
+        }
+
+        var queryItems = components.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "key", value: apiKey))
+        components.queryItems = queryItems
+
+        guard let keyedURL = components.url else {
+            throw ProviderAPIKeyTestError.client(provider: provider)
+        }
+
+        return keyedURL
+    }
+
+    private static func geminiModelsURL(from baseURL: URL) -> URL {
+        let path = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.hasSuffix("v1beta/models") {
+            return baseURL
+        }
+
+        if path.hasSuffix("v1beta") {
+            return baseURL.appendingPathComponent("models")
+        }
+
+        return baseURL
+            .appendingPathComponent("v1beta")
+            .appendingPathComponent("models")
+    }
+
+    private static func openAIModelsURL(from baseURL: URL) -> URL {
+        let path = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.hasSuffix("models") {
+            return baseURL
+        }
+
+        if path.hasSuffix("v1") {
+            return baseURL.appendingPathComponent("models")
+        }
+
+        return baseURL
+            .appendingPathComponent("v1")
+            .appendingPathComponent("models")
+    }
+
+    private static func googleTranslateLanguagesURL(from baseURL: URL) -> URL {
+        let path = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.hasSuffix("language/translate/v2/languages") {
+            return baseURL
+        }
+
+        if path.hasSuffix("language/translate/v2") {
+            return baseURL.appendingPathComponent("languages")
+        }
+
+        return baseURL
+            .appendingPathComponent("language")
+            .appendingPathComponent("translate")
+            .appendingPathComponent("v2")
+            .appendingPathComponent("languages")
+    }
+}
+
 struct TranscriptTranslationService: TranscriptTranslating {
     private let geminiAPIKeyStore: any GeminiAPIKeyStoring
     private let openAIAPIKeyStore: any OpenAIAPIKeyStoring
@@ -812,4 +1001,33 @@ private struct GoogleTranslateData: Decodable {
 
 private struct GoogleTranslateResult: Decodable {
     let translatedText: String
+}
+
+private struct GeminiModelsEnvelope: Decodable {
+    let models: [GeminiModelEnvelope]
+}
+
+private struct GeminiModelEnvelope: Decodable {
+    let name: String?
+}
+
+private struct OpenAIModelsEnvelope: Decodable {
+    let object: String
+    let data: [OpenAIModelEnvelope]
+}
+
+private struct OpenAIModelEnvelope: Decodable {
+    let id: String?
+}
+
+private struct GoogleTranslateLanguagesEnvelope: Decodable {
+    let data: GoogleTranslateLanguagesData
+}
+
+private struct GoogleTranslateLanguagesData: Decodable {
+    let languages: [GoogleTranslateLanguageEnvelope]
+}
+
+private struct GoogleTranslateLanguageEnvelope: Decodable {
+    let language: String?
 }

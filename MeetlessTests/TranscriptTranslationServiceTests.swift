@@ -387,6 +387,150 @@ final class TranscriptTranslationServiceTests: XCTestCase {
             XCTAssertTrue(error.safeUserMessage.contains("Google Translate returned"))
         }
     }
+
+    func testGeminiAPIKeyTestUsesModelsEndpoint() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(
+                    statusCode: 200,
+                    body: Data(#"{"models":[{"name":"models/gemini-test"}]}"#.utf8)
+                )
+            ]
+        )
+        let service = ProviderAPIKeyTestService(transport: transport)
+
+        try await service.testAPIKey(
+            ProviderAPIKeyTestRequest(
+                provider: .gemini,
+                apiKey: " gemini-key ",
+                baseURL: URL(string: "https://generativelanguage.test")!
+            )
+        )
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+
+        XCTAssertEqual(request.method, "GET")
+        XCTAssertEqual(request.url.absoluteString, "https://generativelanguage.test/v1beta/models?key=gemini-key")
+        XCTAssertTrue(request.headers.isEmpty)
+        XCTAssertTrue(request.body.isEmpty)
+    }
+
+    func testOpenAIAPIKeyTestUsesModelsEndpointAndBearerAuth() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(
+                    statusCode: 200,
+                    body: Data(#"{"object":"list","data":[{"id":"gpt-test"}]}"#.utf8)
+                )
+            ]
+        )
+        let service = ProviderAPIKeyTestService(transport: transport)
+
+        try await service.testAPIKey(
+            ProviderAPIKeyTestRequest(
+                provider: .openAI,
+                apiKey: "openai-key",
+                baseURL: URL(string: "https://openai.test/v1")!
+            )
+        )
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+
+        XCTAssertEqual(request.method, "GET")
+        XCTAssertEqual(request.url.absoluteString, "https://openai.test/v1/models")
+        XCTAssertEqual(request.headers["Authorization"], "Bearer openai-key")
+        XCTAssertTrue(request.body.isEmpty)
+    }
+
+    func testGoogleTranslateAPIKeyTestUsesLanguagesEndpoint() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(
+                    statusCode: 200,
+                    body: Data(#"{"data":{"languages":[{"language":"en"}]}}"#.utf8)
+                )
+            ]
+        )
+        let service = ProviderAPIKeyTestService(transport: transport)
+
+        try await service.testAPIKey(
+            ProviderAPIKeyTestRequest(
+                provider: .googleTranslate,
+                apiKey: "google-key",
+                baseURL: URL(string: "https://translation.test")!
+            )
+        )
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+
+        XCTAssertEqual(request.method, "GET")
+        XCTAssertEqual(request.url.absoluteString, "https://translation.test/language/translate/v2/languages?key=google-key")
+        XCTAssertTrue(request.headers.isEmpty)
+        XCTAssertTrue(request.body.isEmpty)
+    }
+
+    func testAPIKeyTestMapsAuthenticationAndMalformedResponses() async throws {
+        let authTransport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(statusCode: 403, body: Data())
+            ]
+        )
+        let authService = ProviderAPIKeyTestService(transport: authTransport)
+
+        do {
+            try await authService.testAPIKey(
+                ProviderAPIKeyTestRequest(
+                    provider: .googleTranslate,
+                    apiKey: "bad-key",
+                    baseURL: URL(string: "https://translation.test")!
+                )
+            )
+            XCTFail("Expected authentication failure.")
+        } catch let error as ProviderAPIKeyTestError {
+            XCTAssertEqual(error, .authentication(provider: .googleTranslate, statusCode: 403))
+        }
+
+        let malformedTransport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [
+                TranscriptTranslationHTTPResponse(statusCode: 200, body: Data(#"{"models":[]}"#.utf8))
+            ]
+        )
+        let malformedService = ProviderAPIKeyTestService(transport: malformedTransport)
+
+        do {
+            try await malformedService.testAPIKey(
+                ProviderAPIKeyTestRequest(
+                    provider: .gemini,
+                    apiKey: "gemini-key",
+                    baseURL: URL(string: "https://generativelanguage.test")!
+                )
+            )
+            XCTFail("Expected malformed response failure.")
+        } catch let error as ProviderAPIKeyTestError {
+            XCTAssertEqual(error, .malformedResponse(provider: .gemini))
+        }
+    }
+
+    func testAPIKeyTestMapsTransportFailureToClientError() async throws {
+        let transport = FixtureTranscriptTranslationHTTPTransport(
+            responses: [],
+            failure: URLError(.notConnectedToInternet)
+        )
+        let service = ProviderAPIKeyTestService(transport: transport)
+
+        do {
+            try await service.testAPIKey(
+                ProviderAPIKeyTestRequest(
+                    provider: .openAI,
+                    apiKey: "openai-key",
+                    baseURL: URL(string: "https://openai.test")!
+                )
+            )
+            XCTFail("Expected client failure.")
+        } catch let error as ProviderAPIKeyTestError {
+            XCTAssertEqual(error, .client(provider: .openAI))
+        }
+    }
 }
 
 final class TranscriptCoordinatorTranslationTests: XCTestCase {
@@ -780,14 +924,19 @@ private actor FixtureTranscriptTranslator: TranscriptTranslating {
 
 private actor FixtureTranscriptTranslationHTTPTransport: TranscriptTranslationHTTPTransport {
     private var queuedResponses: [TranscriptTranslationHTTPResponse]
+    private let failure: Error?
     private(set) var requests: [TranscriptTranslationHTTPRequest] = []
 
-    init(responses: [TranscriptTranslationHTTPResponse]) {
+    init(responses: [TranscriptTranslationHTTPResponse], failure: Error? = nil) {
         self.queuedResponses = responses
+        self.failure = failure
     }
 
     func send(_ request: TranscriptTranslationHTTPRequest) async throws -> TranscriptTranslationHTTPResponse {
         requests.append(request)
+        if let failure {
+            throw failure
+        }
         guard !queuedResponses.isEmpty else {
             return TranscriptTranslationHTTPResponse(statusCode: 500, body: Data())
         }

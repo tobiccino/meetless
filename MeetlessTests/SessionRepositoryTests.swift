@@ -146,6 +146,91 @@ final class SessionRepositoryTests: XCTestCase {
         )
     }
 
+    func testTranslatedTranscriptSnapshotReopensWithOriginalTranscriptText() async throws {
+        let repository = SessionRepository()
+        let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryTranslatedTranscriptTests")
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+
+        let chunks = [
+            MeetlessTestSupport.makeChunk(
+                source: .meeting,
+                text: "Xin chao nhom.",
+                sequenceNumber: 1,
+                originalText: "Hello team.",
+                translationProvider: .googleTranslate,
+                translationStatus: .translated
+            )
+        ]
+
+        let session = try await repository.beginSessionBundle(
+            at: scratchDirectory,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane is recording.", state: .monitoring)
+            ],
+            transcriptChunks: chunks,
+            startedAt: Date(timeIntervalSince1970: 250)
+        )
+
+        _ = try await repository.finalizeSession(
+            session,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane finished cleanly.", state: .ready)
+            ],
+            transcriptChunks: chunks,
+            endedAt: Date(timeIntervalSince1970: 280),
+            status: .completed
+        )
+
+        let detail = try await repository.loadSavedSessionDetail(at: session.directoryURL)
+        let chunk = try XCTUnwrap(detail.transcriptChunks.first)
+
+        XCTAssertEqual(chunk.text, "Xin chao nhom.")
+        XCTAssertEqual(chunk.originalText, "Hello team.")
+        XCTAssertEqual(chunk.translationProvider, .googleTranslate)
+        XCTAssertEqual(chunk.translationStatus, .translated)
+        XCTAssertTrue(
+            detail.savedSessionNotices.contains(where: { $0.message.contains("both translated text and the original transcript") })
+        )
+    }
+
+    @MainActor
+    func testSessionDetailViewModelExposesOriginalTranscriptForTranslatedRows() throws {
+        let viewModel = SessionDetailViewModel()
+        let detail = PersistedSessionDetail(
+            id: "translated-session",
+            directoryURL: URL(fileURLWithPath: "/tmp/translated-session", isDirectory: true),
+            title: "Translated Session",
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 120),
+            durationSeconds: 20,
+            status: .completed,
+            transcriptSnapshotMatchesCommittedTimeline: true,
+            transcriptSnapshotWarning: nil,
+            sourceStatuses: [
+                SourcePipelineStatus(source: .meeting, detail: "Meeting lane finished cleanly.", state: .ready)
+            ],
+            updatedAt: Date(timeIntervalSince1970: 120),
+            transcriptSavedAt: Date(timeIntervalSince1970: 120),
+            transcriptChunks: [
+                MeetlessTestSupport.makeChunk(
+                    source: .meeting,
+                    text: "Xin chao nhom.",
+                    sequenceNumber: 1,
+                    originalText: "Hello team.",
+                    translationProvider: .googleTranslate,
+                    translationStatus: .translated
+                )
+            ],
+            generatedNotes: nil
+        )
+
+        viewModel.showDetail(detail)
+        let row = try XCTUnwrap(viewModel.transcriptRows.first)
+
+        XCTAssertEqual(row.text, "Xin chao nhom.")
+        XCTAssertEqual(row.originalText, "Hello team.")
+    }
+
     func testFinalizeSessionCompressesWAVArtifactsAfterStop() async throws {
         let repository = SessionRepository()
         let scratchDirectory = try MeetlessTestSupport.makeTemporaryDirectory(prefix: "SessionRepositoryCompressionTests")

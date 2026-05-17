@@ -234,6 +234,16 @@ private struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(!viewModel.canSave)
 
+                        Button {
+                            Task {
+                                await viewModel.testGeminiAPIKey()
+                            }
+                        } label: {
+                            Label("Test Key", systemImage: "checkmark.shield")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!viewModel.canTestGeminiAPIKey)
+
                         Button(role: .destructive) {
                             isConfirmingDelete = true
                         } label: {
@@ -244,6 +254,8 @@ private struct SettingsView: View {
 
                         Spacer()
                     }
+
+                    apiKeyTestStatusText(viewModel.geminiKeyTestStatus)
                 }
                 .padding(18)
                 .background(MeetlessDesignTokens.Colors.windowBackground)
@@ -308,13 +320,13 @@ private struct SettingsView: View {
                     .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
             }
 
-            Picker("Language", selection: $viewModel.transcriptionLanguage) {
-                ForEach(TranscriptionLanguage.allCases) { language in
-                    Text(language.displayName).tag(language)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(maxWidth: 320)
+            BoundedLanguagePicker(
+                title: "Language",
+                items: TranscriptionLanguage.allCases,
+                selection: $viewModel.transcriptionLanguage,
+                displayName: \.displayName
+            )
+            .frame(maxWidth: 320, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("Whisper model")
@@ -474,12 +486,12 @@ private struct SettingsView: View {
                     .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
             }
 
-            Picker("Output language", selection: $viewModel.transcriptOutputLanguage) {
-                ForEach(TranscriptOutputLanguage.allCases) { language in
-                    Text(language.displayName).tag(language)
-                }
-            }
-            .pickerStyle(.menu)
+            BoundedLanguagePicker(
+                title: "Output language",
+                items: TranscriptOutputLanguage.allCases,
+                selection: $viewModel.transcriptOutputLanguage,
+                displayName: \.displayName
+            )
             .frame(maxWidth: 320, alignment: .leading)
 
             Picker("Translation provider", selection: $viewModel.transcriptTranslationProvider) {
@@ -664,6 +676,16 @@ private struct SettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!viewModel.canSaveOpenAIAPIKey)
 
+                Button {
+                    Task {
+                        await viewModel.testOpenAIAPIKey()
+                    }
+                } label: {
+                    Label("Test Key", systemImage: "checkmark.shield")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!viewModel.canTestOpenAIAPIKey)
+
                 Button(role: .destructive) {
                     isConfirmingOpenAIDelete = true
                 } label: {
@@ -674,6 +696,8 @@ private struct SettingsView: View {
 
                 Spacer()
             }
+
+            apiKeyTestStatusText(viewModel.openAIKeyTestStatus)
         }
         .padding(18)
         .background(MeetlessDesignTokens.Colors.windowBackground)
@@ -726,6 +750,16 @@ private struct SettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!viewModel.canSaveGoogleTranslateAPIKey)
 
+                Button {
+                    Task {
+                        await viewModel.testGoogleTranslateAPIKey()
+                    }
+                } label: {
+                    Label("Test Key", systemImage: "checkmark.shield")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!viewModel.canTestGoogleTranslateAPIKey)
+
                 Button(role: .destructive) {
                     isConfirmingGoogleTranslateDelete = true
                 } label: {
@@ -736,6 +770,8 @@ private struct SettingsView: View {
 
                 Spacer()
             }
+
+            apiKeyTestStatusText(viewModel.googleTranslateKeyTestStatus)
         }
         .padding(18)
         .background(MeetlessDesignTokens.Colors.windowBackground)
@@ -744,6 +780,114 @@ private struct SettingsView: View {
             RoundedRectangle(cornerRadius: MeetlessDesignTokens.Radius.panel, style: .continuous)
                 .stroke(MeetlessDesignTokens.Colors.separator)
         )
+    }
+
+    @ViewBuilder
+    private func apiKeyTestStatusText(_ status: GeminiSettingsViewModel.KeyTestStatus) -> some View {
+        if let message = status.message {
+            HStack(spacing: 8) {
+                if status.isTesting {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Text(message)
+                    .font(MeetlessDesignTokens.Typography.caption)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(apiKeyTestStatusColor(status))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func apiKeyTestStatusColor(_ status: GeminiSettingsViewModel.KeyTestStatus) -> Color {
+        switch status {
+        case .idle, .testing:
+            return MeetlessDesignTokens.Colors.secondaryText
+        case .valid:
+            return MeetlessDesignTokens.Colors.successGreen
+        case .invalid, .error:
+            return MeetlessDesignTokens.Colors.recordingRed
+        }
+    }
+}
+
+private struct BoundedLanguagePicker<Item: Identifiable & Equatable>: View {
+    let title: String
+    let items: [Item]
+    @Binding var selection: Item
+    let displayName: KeyPath<Item, String>
+    @State private var isPresented = false
+
+    private let listMaxHeight: CGFloat = 260
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(MeetlessDesignTokens.Typography.body.weight(.medium))
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+
+                Spacer(minLength: 12)
+
+                Text(selection[keyPath: displayName])
+                    .font(MeetlessDesignTokens.Typography.body)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
+            }
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        }
+        .buttonStyle(.bordered)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(items) { item in
+                        languageRow(item)
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+            .frame(width: 320)
+            .frame(maxHeight: listMaxHeight)
+        }
+        .accessibilityLabel(title)
+        .accessibilityValue(selection[keyPath: displayName])
+    }
+
+    private func languageRow(_ item: Item) -> some View {
+        Button {
+            selection = item
+            isPresented = false
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryBlue)
+                    .frame(width: 14)
+                    .opacity(item == selection ? 1 : 0)
+
+                Text(item[keyPath: displayName])
+                    .font(MeetlessDesignTokens.Typography.body)
+                    .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                    .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
