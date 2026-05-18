@@ -19,6 +19,7 @@
 - Added live transcript rows so partial transcript and translation progress can stream in the recording view before persisted chunks commit.
 - Kept the live recording transcript scrolled to the newest row as transcript content updates.
 - Paused live transcript auto-scroll while the user reviews earlier rows, resuming only after they scroll back to the bottom.
+- Added a draggable live transcript height control during recording and persisted the selected height.
 - Buffered split transcript fragments before translation so incomplete phrases are not sent to the translation API until a sentence boundary, size/time threshold, or Stop flush.
 - Skipped translation API calls when the transcription input language and transcript output language are the same.
 - Preserved and displayed original transcript text above translated transcript rows, with italic styling and spacing, when translation succeeds.

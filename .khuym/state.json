@@ -16,13 +16,13 @@
   "active_workers": [],
   "blockers": [],
   "focus": "idle",
-  "summary": "Live transcript auto-scroll now pauses when the user scrolls away from bottom and resumes after they scroll back to bottom.",
-  "next_action": "Manual UAT: start recording, scroll live transcript upward, confirm new rows do not force bottom, then scroll back to bottom and confirm auto-scroll resumes.",
+  "summary": "Recording now supports a draggable live transcript height control with persisted min/default/max bounds.",
+  "next_action": "Manual UAT: start recording, drag the live transcript resize handle up/down, confirm more rows are visible, and reopen recording to confirm the chosen height persists.",
   "review_uat": {
     "automated": {
-      "focused_tests": "passed: TranscriptAutoScrollStateTests, 5 tests, 0 failures",
-      "full_suite": "passed: MeetlessTests, 118 tests, 0 failures",
-      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests/TranscriptAutoScrollStateTests; xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests"
+      "focused_tests": "passed: RecordingTranscriptPanelHeightPreferenceTests and TranscriptAutoScrollStateTests, 6 tests, 0 failures",
+      "full_suite": "passed: MeetlessTests, 119 tests, 0 failures",
+      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests/RecordingTranscriptPanelHeightPreferenceTests -only-testing:MeetlessTests/TranscriptAutoScrollStateTests; xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests"
     },
     "manual": "pending"
   },
@@ -34,5 +34,5 @@
     "learnings_file": "",
     "critical_promotions": 0
   },
-  "last_updated": "2026-05-18T17:17:00+07:00"
+  "last_updated": "2026-05-18T17:24:00+07:00"
 }

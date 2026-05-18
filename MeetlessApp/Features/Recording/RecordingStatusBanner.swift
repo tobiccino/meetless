@@ -18,6 +18,9 @@ struct RecordingStatusBanner: View {
 private struct ActiveRecordingPanel: View {
     @ObservedObject var viewModel: RecordingViewModel
 
+    @AppStorage(RecordingTranscriptPanelHeightPreference.storageKey) private var transcriptPanelHeight = RecordingTranscriptPanelHeightPreference.defaultHeight
+    @State private var transcriptResizeStartHeight: Double?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
@@ -136,8 +139,48 @@ private struct ActiveRecordingPanel: View {
                     .foregroundStyle(MeetlessDesignTokens.Colors.tertiaryText)
             }
 
-            TranscriptRowsView(rows: viewModel.liveTranscriptRows, maxHeight: 250)
+            VStack(spacing: 0) {
+                TranscriptRowsView(rows: viewModel.liveTranscriptRows, maxHeight: CGFloat(clampedTranscriptPanelHeight))
+
+                transcriptResizeHandle
+            }
         }
+    }
+
+    private var transcriptResizeHandle: some View {
+        HStack {
+            Spacer(minLength: 0)
+
+            Capsule()
+                .fill(MeetlessDesignTokens.Colors.tertiaryText.opacity(0.55))
+                .frame(width: 42, height: 4)
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
+                .gesture(transcriptResizeGesture)
+                .accessibilityLabel("Resize transcript height")
+                .accessibilityAddTraits(.isButton)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var transcriptResizeGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                let startHeight = transcriptResizeStartHeight ?? clampedTranscriptPanelHeight
+                transcriptResizeStartHeight = startHeight
+                transcriptPanelHeight = RecordingTranscriptPanelHeightPreference.clamped(
+                    startHeight + Double(value.translation.height)
+                )
+            }
+            .onEnded { _ in
+                transcriptResizeStartHeight = nil
+                transcriptPanelHeight = clampedTranscriptPanelHeight
+            }
+    }
+
+    private var clampedTranscriptPanelHeight: Double {
+        RecordingTranscriptPanelHeightPreference.clamped(transcriptPanelHeight)
     }
 
     private var healthRows: [RecordingHealthRow] {
@@ -239,6 +282,17 @@ private struct ActiveRecordingPanel: View {
         }
 
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+}
+
+enum RecordingTranscriptPanelHeightPreference {
+    static let storageKey = "meetless.recordingTranscript.maxHeight"
+    static let minimumHeight = 180.0
+    static let defaultHeight = 320.0
+    static let maximumHeight = 520.0
+
+    static func clamped(_ height: Double) -> Double {
+        min(max(height, minimumHeight), maximumHeight)
     }
 }
 

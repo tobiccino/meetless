@@ -66,3 +66,20 @@ final class TranscriptAutoScrollStateTests: XCTestCase {
         XCTAssertFalse(state.isUserScrolling)
     }
 }
+
+final class RecordingTranscriptPanelHeightPreferenceTests: XCTestCase {
+    func testClampsTranscriptPanelHeightToSupportedRange() {
+        XCTAssertEqual(
+            RecordingTranscriptPanelHeightPreference.clamped(RecordingTranscriptPanelHeightPreference.minimumHeight - 40),
+            RecordingTranscriptPanelHeightPreference.minimumHeight
+        )
+        XCTAssertEqual(
+            RecordingTranscriptPanelHeightPreference.clamped(RecordingTranscriptPanelHeightPreference.maximumHeight + 40),
+            RecordingTranscriptPanelHeightPreference.maximumHeight
+        )
+        XCTAssertEqual(
+            RecordingTranscriptPanelHeightPreference.clamped(RecordingTranscriptPanelHeightPreference.defaultHeight),
+            RecordingTranscriptPanelHeightPreference.defaultHeight
+        )
+    }
+}
