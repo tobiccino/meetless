@@ -684,19 +684,29 @@ struct SessionDetailView: View {
                     .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(row.text)
-                        .font(MeetlessDesignTokens.Typography.body)
-                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                        .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
                     if let originalText = row.originalText {
                         Text("Original: \(originalText)")
                             .font(MeetlessDesignTokens.Typography.caption)
+                            .italic()
                             .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                             .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Translate: \(row.text)")
+                            .font(MeetlessDesignTokens.Typography.body)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    } else {
+                        Text(row.text)
+                            .font(MeetlessDesignTokens.Typography.body)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(MeetlessDesignTokens.Colors.primaryText)
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -713,7 +723,7 @@ struct SessionDetailView: View {
 
     private func transcriptRowAccessibilityText(_ row: SessionDetailViewModel.TranscriptRow) -> String {
         if let originalText = row.originalText {
-            return "\(row.timeRangeText), \(row.text), original: \(originalText)"
+            return "\(row.timeRangeText), original: \(originalText), translate: \(row.text)"
         }
 
         return "\(row.timeRangeText), \(row.text)"

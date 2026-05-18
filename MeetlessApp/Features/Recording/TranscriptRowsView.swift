@@ -104,19 +104,29 @@ private struct TranscriptRow: View {
                     .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(row.text)
-                        .font(MeetlessDesignTokens.Typography.body)
-                        .tracking(MeetlessDesignTokens.Typography.letterSpacing)
-                        .foregroundStyle(textColor)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
                     if let originalText {
                         Text("Original: \(originalText)")
                             .font(MeetlessDesignTokens.Typography.caption)
+                            .italic()
                             .tracking(MeetlessDesignTokens.Typography.letterSpacing)
                             .foregroundStyle(MeetlessDesignTokens.Colors.secondaryText)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("Translate: \(row.text)")
+                            .font(MeetlessDesignTokens.Typography.body)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(textColor)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    } else {
+                        Text(row.text)
+                            .font(MeetlessDesignTokens.Typography.body)
+                            .tracking(MeetlessDesignTokens.Typography.letterSpacing)
+                            .foregroundStyle(textColor)
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -150,7 +160,7 @@ private struct TranscriptRow: View {
 
     private var accessibilityText: String {
         if let originalText {
-            return "\(formattedStartTime), \(row.text), original: \(originalText)"
+            return "\(formattedStartTime), original: \(originalText), translate: \(row.text)"
         }
 
         return "\(formattedStartTime), \(row.text)"

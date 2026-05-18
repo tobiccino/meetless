@@ -16,13 +16,13 @@
   "active_workers": [],
   "blockers": [],
   "focus": "idle",
-  "summary": "Settings now supports non-persisting Test Key actions for Gemini, OpenAI, and Google Translate, and transcript rows show saved translated text plus the original transcript when translation succeeds.",
-  "next_action": "Manual UAT: open Settings, test typed and saved provider API keys, then record or reopen a translated session and verify the translated row shows the original transcript below it.",
+  "summary": "Transcript rows now show Original above Translate with Original italicized and a one-line visual gap in both live recording and saved session detail views.",
+  "next_action": "Manual UAT: record or reopen a translated session and verify Original appears above Translate, Original is italic, and the two lines have the expected visual gap.",
   "review_uat": {
     "automated": {
-      "focused_tests": "passed: provider key test/settings/session transcript tests, 79 tests, 0 failures",
-      "full_suite": "passed: 113 tests, 0 failures",
-      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-"
+      "focused_tests": "passed: SessionRepositoryTests, 21 tests, 0 failures; TranscriptTranslationServiceTests, 15 tests, 0 failures",
+      "full_suite": "not rerun for this UI-only change; previous review recorded 113 tests, 0 failures",
+      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests/SessionRepositoryTests; xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests/TranscriptTranslationServiceTests"
     },
     "manual": "pending"
   },
@@ -34,5 +34,5 @@
     "learnings_file": "",
     "critical_promotions": 0
   },
-  "last_updated": "2026-05-17T23:28:00+07:00"
+  "last_updated": "2026-05-18T17:05:00+07:00"
 }
