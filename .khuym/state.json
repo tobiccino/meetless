@@ -16,13 +16,13 @@
   "active_workers": [],
   "blockers": [],
   "focus": "idle",
-  "summary": "Transcript rows now show Original above Translate with Original italicized and a one-line visual gap in both live recording and saved session detail views.",
-  "next_action": "Manual UAT: record or reopen a translated session and verify Original appears above Translate, Original is italic, and the two lines have the expected visual gap.",
+  "summary": "Live transcript auto-scroll now pauses when the user scrolls away from bottom and resumes after they scroll back to bottom.",
+  "next_action": "Manual UAT: start recording, scroll live transcript upward, confirm new rows do not force bottom, then scroll back to bottom and confirm auto-scroll resumes.",
   "review_uat": {
     "automated": {
-      "focused_tests": "passed: SessionRepositoryTests, 21 tests, 0 failures; TranscriptTranslationServiceTests, 15 tests, 0 failures",
-      "full_suite": "not rerun for this UI-only change; previous review recorded 113 tests, 0 failures",
-      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests/SessionRepositoryTests; xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests/TranscriptTranslationServiceTests"
+      "focused_tests": "passed: TranscriptAutoScrollStateTests, 5 tests, 0 failures",
+      "full_suite": "passed: MeetlessTests, 118 tests, 0 failures",
+      "command": "xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests/TranscriptAutoScrollStateTests; xcodebuild test -project Meetless.xcodeproj -scheme Meetless -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- -only-testing:MeetlessTests"
     },
     "manual": "pending"
   },
@@ -34,5 +34,5 @@
     "learnings_file": "",
     "critical_promotions": 0
   },
-  "last_updated": "2026-05-18T17:05:00+07:00"
+  "last_updated": "2026-05-18T17:17:00+07:00"
 }

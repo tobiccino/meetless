@@ -39,6 +39,7 @@
 		A9F002000000000000000004 /* GeminiSessionNotesClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F002000000000000000005 /* GeminiSessionNotesClientTests.swift */; };
 		A9F003000000000000000001 /* TranscriptTranslationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F003000000000000000002 /* TranscriptTranslationService.swift */; };
 		A9F003000000000000000004 /* TranscriptTranslationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F003000000000000000005 /* TranscriptTranslationServiceTests.swift */; };
+		A9F004000000000000000004 /* TranscriptAutoScrollStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F004000000000000000005 /* TranscriptAutoScrollStateTests.swift */; };
 		A38A2D6A5603EA715DF59E1B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F899578FD929857ED10FEF02 /* HomeView.swift */; };
 		B3E100000000000000000001 /* TranscriptCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */; };
 		B3E100000000000000000002 /* SessionRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E100000000000000000008 /* SessionRepositoryTests.swift */; };
@@ -109,6 +110,7 @@
 		A9F002000000000000000005 /* GeminiSessionNotesClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiSessionNotesClientTests.swift; sourceTree = "<group>"; };
 		A9F003000000000000000002 /* TranscriptTranslationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptTranslationService.swift; sourceTree = "<group>"; };
 		A9F003000000000000000005 /* TranscriptTranslationServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptTranslationServiceTests.swift; sourceTree = "<group>"; };
+		A9F004000000000000000005 /* TranscriptAutoScrollStateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptAutoScrollStateTests.swift; sourceTree = "<group>"; };
 		B3E100000000000000000006 /* MeetlessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetlessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3E100000000000000000007 /* TranscriptCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TranscriptCoordinatorTests.swift; sourceTree = "<group>"; };
 		B3E100000000000000000008 /* SessionRepositoryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRepositoryTests.swift; sourceTree = "<group>"; };
@@ -386,6 +388,7 @@
 				A9F001000000000000000005 /* GeminiAPIKeyStoreTests.swift */,
 				A9F002000000000000000005 /* GeminiSessionNotesClientTests.swift */,
 				A9F003000000000000000005 /* TranscriptTranslationServiceTests.swift */,
+				A9F004000000000000000005 /* TranscriptAutoScrollStateTests.swift */,
 				B3E100000000000000000009 /* TestSupport.swift */,
 			);
 			path = MeetlessTests;
@@ -519,6 +522,7 @@
 				A9F001000000000000000004 /* GeminiAPIKeyStoreTests.swift in Sources */,
 				A9F002000000000000000004 /* GeminiSessionNotesClientTests.swift in Sources */,
 				A9F003000000000000000004 /* TranscriptTranslationServiceTests.swift in Sources */,
+				A9F004000000000000000004 /* TranscriptAutoScrollStateTests.swift in Sources */,
 				B3E100000000000000000003 /* TestSupport.swift in Sources */,
 				B3E100000000000000000001 /* TranscriptCoordinatorTests.swift in Sources */,
 			);

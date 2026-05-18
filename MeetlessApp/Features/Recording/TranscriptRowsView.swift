@@ -2,9 +2,12 @@ import SwiftUI
 
 struct TranscriptRowsView: View {
     private static let bottomAnchorID = "transcript-bottom-anchor"
+    private static let bottomTolerance: CGFloat = 8
 
     let rows: [TranscriptDisplayRow]
     let maxHeight: CGFloat
+
+    @State private var autoScrollState = TranscriptAutoScrollState()
 
     init(chunks: [CommittedTranscriptChunk], maxHeight: CGFloat = 260) {
         self.init(rows: chunks.map(TranscriptDisplayRow.init(chunk:)), maxHeight: maxHeight)
@@ -43,9 +46,26 @@ struct TranscriptRowsView: View {
                         }
                     }
                     .onAppear {
+                        autoScrollState.markScrolledToBottom()
                         scrollToBottom(proxy)
                     }
+                    .onScrollGeometryChange(for: Bool.self) { geometry in
+                        Self.isAtBottom(geometry)
+                    } action: { _, isAtBottom in
+                        autoScrollState.handleGeometryChange(isAtBottom: isAtBottom)
+                    }
+                    .onScrollPhaseChange { oldPhase, newPhase, context in
+                        autoScrollState.handleScrollPhaseChange(
+                            wasUserScrolling: oldPhase.isUserDriven,
+                            isUserScrolling: newPhase.isUserDriven,
+                            isAtBottom: Self.isAtBottom(context.geometry)
+                        )
+                    }
                     .onChange(of: scrollSignature) { _, _ in
+                        guard autoScrollState.shouldAutoScrollOnRowChange else {
+                            return
+                        }
+
                         scrollToBottom(proxy)
                     }
                 }
@@ -71,6 +91,10 @@ struct TranscriptRowsView: View {
         }
     }
 
+    private static func isAtBottom(_ geometry: ScrollGeometry) -> Bool {
+        geometry.visibleRect.maxY >= geometry.contentSize.height - bottomTolerance
+    }
+
     private var emptyState: some View {
         HStack(spacing: 10) {
             Image(systemName: "text.line.first.and.arrowtriangle.forward")
@@ -87,6 +111,54 @@ struct TranscriptRowsView: View {
         }
         .padding(.vertical, 14)
         .accessibilityElement(children: .combine)
+    }
+}
+
+struct TranscriptAutoScrollState: Equatable {
+    private(set) var isPinnedToBottom = true
+    private(set) var isUserScrolling = false
+
+    var shouldAutoScrollOnRowChange: Bool {
+        isPinnedToBottom
+    }
+
+    mutating func markScrolledToBottom() {
+        isPinnedToBottom = true
+    }
+
+    mutating func handleGeometryChange(isAtBottom: Bool) {
+        guard isUserScrolling || isAtBottom else {
+            return
+        }
+
+        isPinnedToBottom = isAtBottom
+    }
+
+    mutating func handleScrollPhaseChange(
+        wasUserScrolling: Bool,
+        isUserScrolling: Bool,
+        isAtBottom: Bool
+    ) {
+        self.isUserScrolling = isUserScrolling
+
+        if wasUserScrolling || isUserScrolling {
+            isPinnedToBottom = isAtBottom
+        } else if isAtBottom {
+            isPinnedToBottom = true
+        }
+    }
+}
+
+private extension ScrollPhase {
+    var isUserDriven: Bool {
+        switch self {
+        case .tracking, .interacting, .decelerating:
+            return true
+        case .idle, .animating:
+            return false
+        @unknown default:
+            return isScrolling
+        }
     }
 }
 
